@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: sieve
+      POSTGRES_PASSWORD: sieve
+      POSTGRES_DB: sieve
+    ports:
+      - "5432:5432"
+    volumes:
+      - sieve-postgres:/var/lib/postgresql/data
+
+volumes:
+  sieve-postgres:

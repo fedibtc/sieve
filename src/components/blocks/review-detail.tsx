@@ -1,0 +1,3321 @@
+"use client";
+
+import { diffLines } from "diff";
+import { common, createLowlight } from "lowlight";
+import {
+  Bot,
+  Check,
+  ChevronDown,
+  Code2,
+  Database,
+  ExternalLink,
+  FileCode2,
+  Folder,
+  GitBranch,
+  Image as ImageIcon,
+  MessageSquare,
+  Radio,
+  RotateCcw,
+  Send,
+  TableProperties,
+  X,
+} from "lucide-react";
+import Image from "next/image";
+import Link from "next/link";
+import {
+  type ReactNode,
+  type RefObject,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { RelativeTime } from "@/components/relative-time";
+import { Badge, type BadgeTone } from "@/components/ui/badge";
+import { formatAbsoluteTime } from "@/lib/time";
+import type { ReviewAnchor } from "@/shared/anchors";
+import type { ReviewBlock, ReviewDocument } from "@/shared/blocks";
+import { Button } from "../ui/button";
+
+const lowlight = createLowlight(common);
+const DIFF_VIEW_MODE_STORAGE_KEY = "sieve:diff-view-mode";
+const SPLIT_DIFF_MIN_WIDTH = 760;
+
+type Review = {
+  id: string;
+  title: string;
+  summary: string | null;
+  repo: string;
+  branch: string;
+  baseRef: string | null;
+  headSha: string | null;
+  prNumber: number | null;
+  prUrl: string | null;
+  status: "open" | "approved" | "changes_requested" | "archived";
+  content: ReviewDocument;
+  contentVersion: number;
+  updatedAt: string;
+  agentName: string | null;
+};
+
+type ThreadComment = {
+  id: string;
+  message: string;
+  anchor: ReviewAnchor | null;
+  resolutionTarget: "agent" | "human";
+  status: "open" | "resolved";
+  consumedAt: string | null;
+  authorName: string | null;
+  authorEmail: string | null;
+  anchorLabel: string;
+  detached: boolean;
+  createdAt: string;
+  createdBy: "human" | "agent";
+};
+
+type Thread = {
+  root: ThreadComment;
+  replies: ThreadComment[];
+};
+
+export function ReviewDetail({
+  initialReview,
+  initialThreads,
+}: {
+  initialReview: Review;
+  initialThreads: Thread[];
+}) {
+  const [review, setReview] = useState(initialReview);
+  const [threads, setThreads] = useState(initialThreads);
+  const [activeAnchor, setActiveAnchor] = useState<ReviewAnchor | null>(null);
+  const [message, setMessage] = useState("");
+  const [resolutionTarget, setResolutionTarget] = useState<"agent" | "human">(
+    "agent",
+  );
+  const [pending, setPending] = useState(false);
+  const [confirmApprove, setConfirmApprove] = useState(false);
+  const [lastPostedThreadId, setLastPostedThreadId] = useState<string | null>(
+    null,
+  );
+  const [justSynced, setJustSynced] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
+  const textSelection = useTextSelectionAnchor();
+
+  const threadsByBlock = useMemo(() => {
+    const map = new Map<string, Thread[]>();
+    for (const thread of threads) {
+      const blockId = thread.root.anchor?.blockId;
+      if (!blockId) {
+        continue;
+      }
+      map.set(blockId, [...(map.get(blockId) ?? []), thread]);
+    }
+    return map;
+  }, [threads]);
+
+  async function refreshThreads() {
+    const response = await fetch(`/api/reviews/${review.id}/comments`);
+    if (!response.ok) {
+      throw new Error("Could not refresh comments");
+    }
+    const data = (await response.json()) as { threads: Thread[] };
+    setThreads(data.threads);
+  }
+
+  useEffect(() => {
+    const reviewId = review.id;
+    let failures = 0;
+    const interval = window.setInterval(() => {
+      void Promise.all([
+        fetch(`/api/reviews/${reviewId}`)
+          .then((response) => {
+            if (!response.ok) {
+              throw new Error("Could not refresh review");
+            }
+            return response.json();
+          })
+          .then((data: { review: Review }) => {
+            setReview((current) =>
+              stableJson(current) === stableJson(data.review)
+                ? current
+                : data.review,
+            );
+          }),
+        fetch(`/api/reviews/${reviewId}/comments`)
+          .then((response) => {
+            if (!response.ok) {
+              throw new Error("Could not refresh comments");
+            }
+            return response.json();
+          })
+          .then((data: { threads: Thread[] }) => {
+            setThreads((current) =>
+              stableJson(current) === stableJson(data.threads)
+                ? current
+                : data.threads,
+            );
+          }),
+      ])
+        .then(() => {
+          failures = 0;
+          setReconnecting(false);
+          setJustSynced(true);
+          window.setTimeout(() => setJustSynced(false), 1600);
+        })
+        .catch(() => {
+          failures += 1;
+          if (failures >= 2) {
+            setReconnecting(true);
+          }
+        });
+    }, 10_000);
+    return () => window.clearInterval(interval);
+  }, [review.id]);
+
+  useEffect(() => {
+    flashAnchor(activeAnchor);
+  }, [activeAnchor]);
+
+  async function submitComment() {
+    if (!message.trim()) {
+      return;
+    }
+    setPending(true);
+    try {
+      const response = await fetch(`/api/reviews/${review.id}/comments`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          message,
+          anchor: activeAnchor,
+          resolutionTarget,
+        }),
+      });
+      const data = (await response.json()) as { comment?: { id: string } };
+      setMessage("");
+      await refreshThreads();
+      if (data.comment?.id) {
+        setLastPostedThreadId(data.comment.id);
+        window.setTimeout(() => scrollToThread(data.comment?.id), 0);
+      }
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function setCommentStatus(
+    commentId: string,
+    status: "open" | "resolved",
+  ) {
+    await fetch(`/api/reviews/${review.id}/comments/${commentId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    await refreshThreads();
+  }
+
+  async function setReviewStatus(
+    status: "open" | "approved" | "changes_requested" | "archived",
+  ) {
+    const response = await fetch(`/api/reviews/${review.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    const data = (await response.json()) as { review: Review };
+    setReview(data.review);
+    setConfirmApprove(false);
+  }
+
+  async function submitQuestionAnswer(anchor: ReviewAnchor, answer: string) {
+    if (!answer.trim() || pending) {
+      return;
+    }
+    setActiveAnchor(anchor);
+    setPending(true);
+    try {
+      const response = await fetch(`/api/reviews/${review.id}/comments`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          message: answer,
+          anchor,
+          resolutionTarget: "agent",
+        }),
+      });
+      if (!response.ok) {
+        throw new Error("Could not post answer");
+      }
+      const data = (await response.json()) as { comment?: { id: string } };
+      await refreshThreads();
+      if (data.comment?.id) {
+        setLastPostedThreadId(data.comment.id);
+        window.setTimeout(() => scrollToThread(data.comment?.id), 0);
+      }
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <main className="min-h-screen bg-background text-foreground">
+      <header className="border-b bg-background">
+        <div className="mx-auto flex w-full max-w-[1600px] items-start justify-between gap-6 px-6 py-5">
+          <div>
+            <Link
+              className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+              href="/reviews"
+            >
+              Reviews /
+            </Link>
+            <h1 className="mt-2 text-3xl font-semibold tracking-tight">
+              {review.title}
+            </h1>
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+              <span className="inline-flex items-center gap-1 rounded-full border bg-card px-2 py-0.5 font-mono text-xs">
+                {review.repo}
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full border bg-card px-2 py-0.5 font-mono text-xs">
+                <GitBranch className="h-3 w-3" />
+                {review.branch}
+              </span>
+              <StatusBadge status={review.status} />
+              <span className="inline-flex items-center rounded-full border bg-card px-2 py-0.5 font-mono text-xs">
+                v{review.contentVersion}
+              </span>
+              {review.agentName ? (
+                <span className="inline-flex items-center gap-1 rounded-full border bg-card px-2 py-0.5 text-xs">
+                  <Bot className="h-3 w-3" />
+                  {review.agentName}
+                </span>
+              ) : null}
+              <RelativeTime prefix="updated" value={review.updatedAt} />
+              {review.prUrl ? (
+                <a
+                  className="inline-flex items-center gap-1 rounded-md border bg-card px-2 py-1 text-xs font-medium transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  href={review.prUrl}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  PR #{review.prNumber ?? "?"}
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+              ) : null}
+            </div>
+          </div>
+          <div className="flex shrink-0 gap-2">
+            {review.status === "approved" ||
+            review.status === "changes_requested" ? (
+              <Button variant="outline" onClick={() => setReviewStatus("open")}>
+                <RotateCcw className="h-4 w-4" />
+                Reopen
+              </Button>
+            ) : confirmApprove ? (
+              <div className="flex items-center gap-2 rounded-md border bg-card p-1">
+                <span className="px-2 text-sm text-muted-foreground">
+                  Approve review?
+                </span>
+                <Button size="sm" onClick={() => setReviewStatus("approved")}>
+                  Confirm
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setConfirmApprove(false)}
+                >
+                  Cancel
+                </Button>
+              </div>
+            ) : (
+              <>
+                <Button
+                  className="border-amber-300 text-amber-800 hover:bg-amber-50"
+                  variant="outline"
+                  onClick={() => setReviewStatus("changes_requested")}
+                >
+                  <X className="h-4 w-4" />
+                  Request changes
+                </Button>
+                <Button onClick={() => setConfirmApprove(true)}>
+                  <Check className="h-4 w-4" />
+                  Approve
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+      </header>
+
+      <div className="mx-auto grid w-full max-w-[1600px] grid-cols-1 gap-8 px-6 py-8 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <TextSelectionToolbar
+          selection={textSelection}
+          onComment={(anchor) => setActiveAnchor(anchor)}
+        />
+        <section className="min-w-0 space-y-8">
+          <BlocksList
+            blocks={review.content.blocks}
+            threadsByBlock={threadsByBlock}
+            onAnchor={setActiveAnchor}
+            onAnswer={(anchor, answer) => {
+              void submitQuestionAnswer(anchor, answer);
+            }}
+          />
+        </section>
+        <aside className="max-h-[calc(100vh-5rem)] space-y-4 overflow-y-auto lg:sticky lg:top-20">
+          <Composer
+            anchor={activeAnchor}
+            message={message}
+            resolutionTarget={resolutionTarget}
+            pending={pending}
+            onAnchor={setActiveAnchor}
+            onMessage={setMessage}
+            onResolutionTarget={setResolutionTarget}
+            onSubmit={submitComment}
+          />
+          <ThreadsSidebar
+            justSynced={justSynced}
+            reconnecting={reconnecting}
+            lastPostedThreadId={lastPostedThreadId}
+            reviewId={review.id}
+            threads={threads}
+            onRefresh={refreshThreads}
+            onStatus={setCommentStatus}
+          />
+        </aside>
+      </div>
+    </main>
+  );
+}
+
+type TextSelectionAnchor = {
+  anchor: ReviewAnchor;
+  rect: { left: number; top: number };
+};
+
+function TextSelectionToolbar({
+  selection,
+  onComment,
+}: {
+  selection: TextSelectionAnchor | null;
+  onComment: (anchor: ReviewAnchor) => void;
+}) {
+  if (!selection) {
+    return null;
+  }
+
+  return (
+    <button
+      className="fixed z-50 inline-flex items-center gap-1 rounded-full border bg-card px-3 py-1.5 text-sm font-medium shadow-lg transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      style={{
+        left: selection.rect.left,
+        top: selection.rect.top,
+        transform: "translate(-50%, -100%)",
+      }}
+      type="button"
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={() => {
+        onComment(selection.anchor);
+        window.getSelection()?.removeAllRanges();
+      }}
+    >
+      <MessageSquare className="h-4 w-4" />
+      Comment
+    </button>
+  );
+}
+
+function useTextSelectionAnchor() {
+  const [selectionAnchor, setSelectionAnchor] =
+    useState<TextSelectionAnchor | null>(null);
+
+  useEffect(() => {
+    function updateSelection(fallbackNode?: Node | null) {
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+        setSelectionAnchor(null);
+        return;
+      }
+      const range = selection.getRangeAt(0);
+      const container =
+        textAnchorContainer(range.commonAncestorContainer) ??
+        textAnchorContainer(selection.anchorNode) ??
+        textAnchorContainer(selection.focusNode) ??
+        textAnchorContainer(fallbackNode ?? null);
+      if (!container) {
+        setSelectionAnchor(null);
+        return;
+      }
+      const fullText = container.textContent ?? "";
+      const rawSelection = selection.toString();
+      const rawAnchorText = fullText.includes(rawSelection)
+        ? rawSelection
+        : fullText;
+      const selectedText = normalizeComparableText(rawAnchorText);
+      if (!selectedText) {
+        setSelectionAnchor(null);
+        return;
+      }
+      const blockId = container.dataset.blockId;
+      if (!blockId) {
+        setSelectionAnchor(null);
+        return;
+      }
+      const rect = range.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) {
+        setSelectionAnchor(null);
+        return;
+      }
+      const index = fullText.indexOf(rawAnchorText);
+      const contextBefore =
+        index >= 0 ? fullText.slice(Math.max(0, index - 80), index) : "";
+      const contextAfter =
+        index >= 0
+          ? fullText.slice(
+              index + rawAnchorText.length,
+              index + rawAnchorText.length + 80,
+            )
+          : "";
+      setSelectionAnchor({
+        anchor: {
+          blockId,
+          kind: "text",
+          textQuote: {
+            quote: selectedText.slice(0, 220),
+            contextBefore: contextBefore || undefined,
+            contextAfter: contextAfter || undefined,
+          },
+        },
+        rect: {
+          left: rect.left + rect.width / 2,
+          top: Math.max(8, rect.top - 8),
+        },
+      });
+    }
+
+    function scheduleSelectionUpdate(event: MouseEvent | KeyboardEvent) {
+      const fallbackNode =
+        "clientX" in event
+          ? document.elementFromPoint(event.clientX, event.clientY)
+          : null;
+      window.setTimeout(() => updateSelection(fallbackNode), 0);
+    }
+
+    const handleSelectionChange = () => updateSelection();
+
+    document.addEventListener("selectionchange", handleSelectionChange);
+    document.addEventListener("mouseup", scheduleSelectionUpdate);
+    document.addEventListener("dblclick", scheduleSelectionUpdate);
+    document.addEventListener("keyup", scheduleSelectionUpdate);
+    window.addEventListener("resize", handleSelectionChange);
+    return () => {
+      document.removeEventListener("selectionchange", handleSelectionChange);
+      document.removeEventListener("mouseup", scheduleSelectionUpdate);
+      document.removeEventListener("dblclick", scheduleSelectionUpdate);
+      document.removeEventListener("keyup", scheduleSelectionUpdate);
+      window.removeEventListener("resize", handleSelectionChange);
+    };
+  }, []);
+
+  return selectionAnchor;
+}
+
+function textAnchorContainer(node: Node | null) {
+  if (!node) {
+    return null;
+  }
+  const element =
+    node.nodeType === Node.ELEMENT_NODE
+      ? (node as Element)
+      : node.parentElement;
+  return element?.closest<HTMLElement>("[data-text-anchorable][data-block-id]");
+}
+
+function BlocksList({
+  blocks,
+  threadsByBlock,
+  onAnchor,
+  onAnswer,
+}: {
+  blocks: ReviewBlock[];
+  threadsByBlock: Map<string, Thread[]>;
+  onAnchor: (anchor: ReviewAnchor) => void;
+  onAnswer: (anchor: ReviewAnchor, answer: string) => void;
+}) {
+  const items: ReactNode[] = [];
+  let index = 0;
+  while (index < blocks.length) {
+    const block = blocks[index];
+    const next = blocks[index + 1];
+    if (
+      block?.type === "rich-text" &&
+      block.data.markdown.trim() === "## Key changes" &&
+      next &&
+      isTabbedKeyChangeBlock(next)
+    ) {
+      const tabBlocks: Array<
+        Extract<ReviewBlock, { type: "diff" | "annotated-code" }>
+      > = [];
+      let tabIndex = index + 1;
+      while (
+        tabIndex < blocks.length &&
+        isTabbedKeyChangeBlock(blocks[tabIndex])
+      ) {
+        tabBlocks.push(
+          blocks[tabIndex] as Extract<
+            ReviewBlock,
+            { type: "diff" | "annotated-code" }
+          >,
+        );
+        tabIndex += 1;
+      }
+      items.push(
+        <CommentableBlock
+          key={block.id}
+          block={block}
+          compactWithPrevious={false}
+          threads={threadsByBlock.get(block.id) ?? []}
+          onAnchor={onAnchor}
+          onAnswer={onAnswer}
+        />,
+      );
+      items.push(
+        <KeyChangesTabs
+          key={`${block.id}:tabs`}
+          blocks={tabBlocks}
+          threadsByBlock={threadsByBlock}
+          onAnchor={onAnchor}
+          onAnswer={onAnswer}
+        />,
+      );
+      index = tabIndex;
+      continue;
+    }
+
+    if (block) {
+      items.push(
+        <CommentableBlock
+          key={block.id}
+          block={block}
+          compactWithPrevious={
+            block.type === "api-endpoint" &&
+            blocks[index - 1]?.type === "api-endpoint"
+          }
+          threads={threadsByBlock.get(block.id) ?? []}
+          onAnchor={onAnchor}
+          onAnswer={onAnswer}
+        />,
+      );
+    }
+    index += 1;
+  }
+
+  return items;
+}
+
+function isTabbedKeyChangeBlock(
+  block: ReviewBlock | undefined,
+): block is Extract<ReviewBlock, { type: "diff" | "annotated-code" }> {
+  return block?.type === "diff" || block?.type === "annotated-code";
+}
+
+function KeyChangesTabs({
+  blocks,
+  threadsByBlock,
+  onAnchor,
+  onAnswer,
+}: {
+  blocks: Array<Extract<ReviewBlock, { type: "diff" | "annotated-code" }>>;
+  threadsByBlock: Map<string, Thread[]>;
+  onAnchor: (anchor: ReviewAnchor) => void;
+  onAnswer: (anchor: ReviewAnchor, answer: string) => void;
+}) {
+  const [activeId, setActiveId] = useState(blocks[0]?.id ?? "");
+  const activeBlock =
+    blocks.find((block) => block.id === activeId) ?? blocks[0];
+
+  useEffect(() => {
+    function activateBlock(event: Event) {
+      const blockId = (event as CustomEvent<{ blockId?: string }>).detail
+        ?.blockId;
+      if (blockId && blocks.some((block) => block.id === blockId)) {
+        setActiveId(blockId);
+      }
+    }
+    window.addEventListener("sieve:activate-block", activateBlock);
+    return () =>
+      window.removeEventListener("sieve:activate-block", activateBlock);
+  }, [blocks]);
+
+  if (!activeBlock) {
+    return null;
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex overflow-x-auto border-b">
+        {blocks.map((block) => {
+          const active = block.id === activeBlock.id;
+          const stats = keyChangeStats(block);
+          const threadCount = threadsByBlock.get(block.id)?.length ?? 0;
+          return (
+            <button
+              key={block.id}
+              className={`flex min-w-0 shrink-0 items-center gap-2 border-b-2 px-3 py-2 text-sm transition-colors ${
+                active
+                  ? "border-primary text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+              type="button"
+              onClick={() => setActiveId(block.id)}
+            >
+              <span className="max-w-56 truncate font-mono">
+                {keyChangeLabel(block)}
+              </span>
+              {stats ? (
+                <span className="font-mono text-xs">
+                  <span className="text-emerald-700">+{stats.additions}</span>{" "}
+                  <span className="text-red-700">-{stats.deletions}</span>
+                </span>
+              ) : null}
+              {threadCount > 0 ? (
+                <Badge tone="amber">
+                  <MessageSquare className="h-3 w-3" />
+                  {threadCount}
+                </Badge>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
+      <CommentableBlock
+        block={activeBlock}
+        compactWithPrevious={false}
+        threads={threadsByBlock.get(activeBlock.id) ?? []}
+        onAnchor={onAnchor}
+        onAnswer={onAnswer}
+      />
+    </div>
+  );
+}
+
+function keyChangeLabel(
+  block: Extract<ReviewBlock, { type: "diff" | "annotated-code" }>,
+) {
+  const filename = block.data.filename;
+  const parts = filename.split("/");
+  const basename = parts.at(-1) ?? filename;
+  const parent = parts.at(-2);
+  return parent ? `${parent}/${basename}` : basename;
+}
+
+function keyChangeStats(
+  block: Extract<ReviewBlock, { type: "diff" | "annotated-code" }>,
+) {
+  if (block.type !== "diff") {
+    return null;
+  }
+  const rows = alignDiffRows(
+    block.data.before,
+    block.data.after,
+    block.data.beforeStartLine ?? 1,
+    block.data.afterStartLine ?? 1,
+  );
+  return {
+    additions: rows.filter((row) => row.afterLine && row.kind !== "context")
+      .length,
+    deletions: rows.filter((row) => row.beforeLine && row.kind !== "context")
+      .length,
+  };
+}
+
+function CommentableBlock({
+  block,
+  compactWithPrevious,
+  threads,
+  onAnchor,
+  onAnswer,
+}: {
+  block: ReviewBlock;
+  compactWithPrevious: boolean;
+  threads: Thread[];
+  onAnchor: (anchor: ReviewAnchor) => void;
+  onAnswer: (anchor: ReviewAnchor, answer: string) => void;
+}) {
+  return (
+    <article
+      id={block.id}
+      className={`group relative scroll-mt-48 rounded-md px-1 py-1 ${
+        compactWithPrevious ? "!mt-0 pt-0" : ""
+      }`}
+    >
+      {block.summary && block.type !== "image-diff" ? (
+        <p
+          className="mb-3 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground"
+          data-block-id={block.id}
+          data-text-anchorable="true"
+        >
+          {block.summary}
+        </p>
+      ) : null}
+      <div className="absolute right-1 top-1 z-10 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+        {threads.length > 0 ? (
+          <button
+            className="inline-flex h-8 items-center gap-1 rounded-full border bg-card px-2 text-xs font-medium text-amber-700 shadow-sm transition-colors hover:bg-amber-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            title={`${threads.length} anchored thread${threads.length === 1 ? "" : "s"}`}
+            type="button"
+            onClick={() => scrollToThread(threads[0]?.root.id)}
+          >
+            <MessageSquare className="h-3.5 w-3.5" />
+            {threads.length}
+          </button>
+        ) : null}
+        <button
+          aria-label="Comment on block"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-full border bg-card text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          title="Comment on block"
+          type="button"
+          onClick={() => onAnchor({ blockId: block.id, kind: "block" })}
+        >
+          <MessageSquare className="h-4 w-4" />
+        </button>
+      </div>
+      <BlockRenderer
+        block={block}
+        compactWithPrevious={compactWithPrevious}
+        threads={threads}
+        onAnchor={onAnchor}
+        onAnswer={onAnswer}
+      />
+    </article>
+  );
+}
+
+function BlockRenderer({
+  block,
+  compactWithPrevious,
+  threads,
+  onAnchor,
+  onAnswer,
+}: {
+  block: ReviewBlock;
+  compactWithPrevious: boolean;
+  threads: Thread[];
+  onAnchor: (anchor: ReviewAnchor) => void;
+  onAnswer: (anchor: ReviewAnchor, answer: string) => void;
+}) {
+  switch (block.type) {
+    case "rich-text":
+      return (
+        <div
+          className="recap-prose max-w-[58rem]"
+          data-block-id={block.id}
+          data-text-anchorable="true"
+        >
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {block.data.markdown}
+          </ReactMarkdown>
+        </div>
+      );
+    case "callout":
+      return <CalloutBlock block={block} />;
+    case "file-tree":
+      return <FileTreeBlock block={block} onAnchor={onAnchor} />;
+    case "diff":
+      return <DiffBlock block={block} threads={threads} onAnchor={onAnchor} />;
+    case "annotated-code":
+      return (
+        <AnnotatedCodeBlock
+          block={block}
+          threads={threads}
+          onAnchor={onAnchor}
+        />
+      );
+    case "data-model":
+      return (
+        <div className="grid gap-3 md:grid-cols-2">
+          {block.data.entities.map((entity) => (
+            <div
+              key={entity.name}
+              className="overflow-hidden rounded-xl border bg-card"
+            >
+              <div className="flex items-center justify-between gap-3 border-b bg-muted/40 px-3 py-2">
+                <h3 className="flex items-center gap-2 font-mono text-sm font-semibold">
+                  <Database className="h-4 w-4 text-muted-foreground" />
+                  {entity.name}
+                </h3>
+                <div className="flex items-center gap-2">
+                  {entity.change ? (
+                    <ChangeBadge change={entity.change} />
+                  ) : null}
+                  <Badge>{entity.fields.length} fields</Badge>
+                </div>
+              </div>
+              <div className="divide-y text-sm">
+                {entity.fields.map((field) => (
+                  <div
+                    key={field.name}
+                    className={`grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3 px-3 py-2 ${fieldToneClass(field.change)}`}
+                  >
+                    <span className="font-mono">{field.name}</span>
+                    <span className="min-w-0 text-right font-mono text-muted-foreground">
+                      {field.was ? (
+                        <>
+                          <span className="line-through">{field.was}</span>{" "}
+                          <span>→</span>{" "}
+                        </>
+                      ) : null}
+                      {field.type ?? "-"}
+                    </span>
+                    {field.note ? (
+                      <span
+                        className="col-span-2 text-xs text-muted-foreground"
+                        data-block-id={block.id}
+                        data-text-anchorable="true"
+                      >
+                        {field.note}
+                      </span>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+          {block.data.relations?.length ? (
+            <div className="rounded-xl border bg-card p-3 text-sm md:col-span-2">
+              <h3 className="mb-2 flex items-center gap-2 font-medium">
+                <TableProperties className="h-4 w-4 text-muted-foreground" />
+                Relations
+              </h3>
+              <ul className="space-y-1 text-muted-foreground">
+                {block.data.relations.map((relation) => (
+                  <li key={relation}>→ {relation}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      );
+    case "api-endpoint":
+      return (
+        <ApiEndpointBlock
+          block={block}
+          compactWithPrevious={compactWithPrevious}
+        />
+      );
+    case "mermaid":
+      return (
+        <MermaidBlock source={block.data.source} caption={block.data.caption} />
+      );
+    case "question-form":
+      return (
+        <div className="space-y-3">
+          {block.data.questions.map((question, index) => (
+            <QuestionCard
+              key={question.id}
+              blockId={block.id}
+              index={index}
+              onAnchor={onAnchor}
+              onAnswer={onAnswer}
+              question={question}
+              threads={threads.filter(
+                (thread) =>
+                  thread.root.anchor?.kind === "question" &&
+                  thread.root.anchor.questionId === question.id,
+              )}
+            />
+          ))}
+        </div>
+      );
+    case "image-diff":
+      return <ImageDiffBlock block={block} />;
+  }
+}
+
+function CalloutBlock({
+  block,
+}: {
+  block: Extract<ReviewBlock, { type: "callout" }>;
+}) {
+  return (
+    <div
+      className={`rounded-lg border border-l-4 px-4 py-3 ${calloutToneClass(
+        block.data.tone,
+      )}`}
+      data-block-id={block.id}
+      data-text-anchorable="true"
+    >
+      <div className="recap-prose max-w-[58rem]">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+          {block.data.markdown}
+        </ReactMarkdown>
+      </div>
+    </div>
+  );
+}
+
+function calloutToneClass(
+  tone: "info" | "decision" | "risk" | "warning" | "success",
+) {
+  const classes = {
+    info: "border-blue-300 bg-blue-50/70",
+    decision: "border-violet-300 bg-violet-50/70",
+    risk: "border-red-300 bg-red-50/70",
+    warning: "border-amber-300 bg-amber-50/70",
+    success: "border-emerald-300 bg-emerald-50/70",
+  };
+  return classes[tone];
+}
+
+function ApiEndpointBlock({
+  block,
+  compactWithPrevious,
+}: {
+  block: Extract<ReviewBlock, { type: "api-endpoint" }>;
+  compactWithPrevious: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div
+      className={`overflow-hidden border bg-card ${
+        compactWithPrevious ? "rounded-t-none border-t-0" : "rounded-lg"
+      }`}
+    >
+      <button
+        className="grid w-full grid-cols-[24px_auto_minmax(0,1fr)_auto] items-center gap-2 bg-muted/30 px-3 py-2 text-left transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        type="button"
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <ChevronDown
+          className={`h-4 w-4 text-muted-foreground transition-transform ${
+            expanded ? "rotate-180" : "-rotate-90"
+          }`}
+        />
+        {block.data.method ? <MethodBadge method={block.data.method} /> : null}
+        <span className="min-w-0">
+          <span className="block truncate font-mono text-sm font-semibold">
+            {block.data.path}
+          </span>
+          {block.summary ? (
+            <span className="block truncate text-xs text-muted-foreground">
+              {block.summary}
+            </span>
+          ) : null}
+        </span>
+        {block.data.change ? <ChangeBadge change={block.data.change} /> : null}
+      </button>
+      {expanded ? (
+        <>
+          {block.data.params.length > 0 ? (
+            <div className="overflow-x-auto border-t">
+              <table className="w-full text-left text-sm">
+                <thead className="text-xs uppercase tracking-wide text-muted-foreground">
+                  <tr>
+                    <th className="px-3 py-2 font-medium">Param</th>
+                    <th className="px-3 py-2 font-medium">Type</th>
+                    <th className="px-3 py-2 font-medium">Note</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {block.data.params.map((param) => (
+                    <tr
+                      key={param.name}
+                      className={fieldToneClass(param.change)}
+                    >
+                      <td className="px-3 py-2 font-mono">{param.name}</td>
+                      <td className="px-3 py-2 font-mono text-xs text-muted-foreground">
+                        {param.was ? (
+                          <>
+                            <span className="line-through">{param.was}</span>{" "}
+                            <span>→</span>{" "}
+                          </>
+                        ) : null}
+                        <span className="rounded border bg-muted px-1.5 py-0.5">
+                          {param.type ?? "-"}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-muted-foreground">
+                        {param.note}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+          {block.data.request !== undefined ? (
+            <JsonExample title="request" value={block.data.request} />
+          ) : null}
+          {block.data.responses?.map((response, index) => (
+            <JsonExample
+              // biome-ignore lint/suspicious/noArrayIndexKey: duplicate response examples need an ordinal in their key.
+              key={`response-${index}-${stableJson(response)}`}
+              title={`response ${index + 1}`}
+              value={response}
+            />
+          ))}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function StatusBadge({
+  status,
+}: {
+  status: "open" | "approved" | "changes_requested" | "archived";
+}) {
+  return (
+    <Badge
+      className="capitalize"
+      tone={
+        status === "open"
+          ? "blue"
+          : status === "approved"
+            ? "green"
+            : status === "changes_requested"
+              ? "amber"
+              : "neutral"
+      }
+    >
+      {status.replace("_", " ")}
+    </Badge>
+  );
+}
+
+function ChangeBadge({
+  change,
+}: {
+  change: "added" | "modified" | "removed" | "renamed";
+}) {
+  const map: Record<typeof change, { label: string; tone: BadgeTone }> = {
+    added: { label: "A", tone: "green" },
+    modified: { label: "M", tone: "blue" },
+    removed: { label: "D", tone: "red" },
+    renamed: { label: "R", tone: "violet" },
+  };
+  const item = map[change];
+  return (
+    <Badge
+      className="h-5 w-6 justify-center px-0 text-[10px] font-semibold"
+      tone={item.tone}
+    >
+      {item.label}
+    </Badge>
+  );
+}
+
+function MethodBadge({ method }: { method: string }) {
+  const normalized = method.toUpperCase();
+  const tone: BadgeTone =
+    normalized === "GET"
+      ? "green"
+      : normalized === "POST"
+        ? "blue"
+        : normalized === "PUT"
+          ? "amber"
+          : normalized === "DELETE"
+            ? "red"
+            : normalized === "PATCH"
+              ? "violet"
+              : "neutral";
+  return (
+    <Badge className="font-mono uppercase" tone={tone}>
+      {normalized}
+    </Badge>
+  );
+}
+
+function PathLabel({ path }: { path: string }) {
+  const index = path.lastIndexOf("/");
+  if (index === -1) {
+    return <span className="truncate font-mono">{path}</span>;
+  }
+  return (
+    <span className="truncate font-mono">
+      <span className="text-muted-foreground">{path.slice(0, index + 1)}</span>
+      <span>{path.slice(index + 1)}</span>
+    </span>
+  );
+}
+
+function FileTreeBlock({
+  block,
+  onAnchor,
+}: {
+  block: Extract<ReviewBlock, { type: "file-tree" }>;
+  onAnchor: (anchor: ReviewAnchor) => void;
+}) {
+  const entries = block.data.entries;
+  const [openGroups, setOpenGroups] = useState<Set<string>>(
+    () => new Set(entries.map((entry) => topLevelDirectory(entry.path))),
+  );
+
+  if (entries.length <= 15) {
+    return (
+      <div className="overflow-hidden rounded-lg border bg-card">
+        {entries.map((entry) => (
+          <FileTreeRow
+            key={entry.path}
+            blockId={block.id}
+            entry={entry}
+            onAnchor={onAnchor}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  const groups = new Map<string, typeof entries>();
+  for (const entry of entries) {
+    const group = topLevelDirectory(entry.path);
+    groups.set(group, [...(groups.get(group) ?? []), entry]);
+  }
+
+  return (
+    <div className="overflow-hidden rounded-lg border bg-card">
+      {Array.from(groups.entries()).map(([group, groupEntries]) => {
+        const open = openGroups.has(group);
+        return (
+          <section key={group} className="border-b last:border-b-0">
+            <button
+              className="flex w-full items-center justify-between gap-3 bg-muted/40 px-3 py-2 text-left text-sm font-medium transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              type="button"
+              onClick={() =>
+                setOpenGroups((current) => {
+                  const next = new Set(current);
+                  if (next.has(group)) {
+                    next.delete(group);
+                  } else {
+                    next.add(group);
+                  }
+                  return next;
+                })
+              }
+            >
+              <span className="flex items-center gap-2">
+                <Folder className="h-4 w-4 text-muted-foreground" />
+                <span className="font-mono">{group}</span>
+              </span>
+              <Badge>{groupEntries.length}</Badge>
+            </button>
+            {open
+              ? groupEntries.map((entry) => (
+                  <FileTreeRow
+                    key={entry.path}
+                    blockId={block.id}
+                    entry={entry}
+                    onAnchor={onAnchor}
+                  />
+                ))
+              : null}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+function FileTreeRow({
+  blockId,
+  entry,
+  onAnchor,
+}: {
+  blockId: string;
+  entry: Extract<ReviewBlock, { type: "file-tree" }>["data"]["entries"][number];
+  onAnchor: (anchor: ReviewAnchor) => void;
+}) {
+  return (
+    <button
+      className="grid w-full grid-cols-[36px_minmax(0,1fr)_110px] items-center gap-3 border-b px-3 py-2 text-left text-sm transition-colors last:border-b-0 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      type="button"
+      onClick={() =>
+        onAnchor({
+          blockId,
+          kind: "file",
+          filePath: entry.path,
+        })
+      }
+    >
+      <ChangeBadge change={entry.change} />
+      <span className="min-w-0">
+        <PathLabel path={entry.path} />
+        {entry.note ? (
+          <span className="block truncate text-xs text-muted-foreground">
+            {entry.note}
+          </span>
+        ) : null}
+      </span>
+      <span className="text-right font-mono text-xs">
+        <span className="text-emerald-700">+{entry.additions ?? 0}</span>{" "}
+        <span className="text-red-700">-{entry.deletions ?? 0}</span>
+      </span>
+    </button>
+  );
+}
+
+function topLevelDirectory(path: string) {
+  return path.split("/")[0] ?? path;
+}
+
+function fieldToneClass(change?: "added" | "modified" | "removed") {
+  if (change === "added") {
+    return "border-l-2 border-l-emerald-400 bg-emerald-50/60";
+  }
+  if (change === "removed") {
+    return "border-l-2 border-l-red-400 bg-red-50/60 text-muted-foreground line-through";
+  }
+  if (change === "modified") {
+    return "border-l-2 border-l-blue-400 bg-blue-50/60";
+  }
+  return "";
+}
+
+function JsonExample({ title, value }: { title: string; value: unknown }) {
+  const json = JSON.stringify(value, null, 2);
+  return (
+    <div className="border-t">
+      <div className="bg-muted/30 px-3 py-1.5 font-mono text-xs text-muted-foreground">
+        {title}
+      </div>
+      <pre className="overflow-x-auto px-3 py-2 font-mono text-xs leading-5">
+        <code className="syntax-highlight">{highlightCode(json, "json")}</code>
+      </pre>
+    </div>
+  );
+}
+
+function QuestionCard({
+  blockId,
+  question,
+  index,
+  onAnchor,
+  onAnswer,
+  threads,
+}: {
+  blockId: string;
+  question: Extract<
+    ReviewBlock,
+    { type: "question-form" }
+  >["data"]["questions"][number];
+  index: number;
+  onAnchor: (anchor: ReviewAnchor) => void;
+  onAnswer: (anchor: ReviewAnchor, answer: string) => void;
+  threads: Thread[];
+}) {
+  const [selected, setSelected] = useState<string[]>([]);
+  const [freeform, setFreeform] = useState("");
+  const isMulti = question.mode === "multi";
+  const answer =
+    question.mode === "freeform" ? freeform.trim() : selected.join(", ");
+  const answerAnchor: ReviewAnchor = {
+    blockId,
+    kind: "question",
+    questionId: question.id,
+    answer,
+  };
+  const answeredMessages = threads.map((thread) => thread.root.message);
+
+  function toggle(option: string) {
+    if (isMulti) {
+      setSelected((current) =>
+        current.includes(option)
+          ? current.filter((item) => item !== option)
+          : [...current, option],
+      );
+      return;
+    }
+    setSelected([option]);
+  }
+
+  return (
+    <div className="rounded-xl border bg-card p-4">
+      <div className="flex gap-3">
+        <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border bg-muted text-sm font-medium">
+          {index + 1}
+        </span>
+        <div className="min-w-0 flex-1">
+          <h3 className="font-medium">{question.prompt}</h3>
+          {question.mode === "freeform" ? (
+            <textarea
+              aria-label={question.prompt}
+              className="mt-3 min-h-24 w-full resize-y rounded-md border bg-card p-3 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring"
+              value={freeform}
+              onChange={(event) => setFreeform(event.target.value)}
+            />
+          ) : (
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {question.options?.map((option) => {
+                const active = selected.includes(option);
+                return (
+                  <button
+                    key={option}
+                    className={`flex items-center gap-2 rounded-lg border p-3 text-left text-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                      active ? "border-primary bg-primary/10" : "bg-card"
+                    }`}
+                    type="button"
+                    onClick={() => toggle(option)}
+                  >
+                    <Radio
+                      className={`h-4 w-4 ${active ? "fill-primary text-primary" : "text-muted-foreground"}`}
+                    />
+                    {option}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          <Button
+            className="mt-3"
+            disabled={!answer}
+            size="sm"
+            onClick={() => {
+              onAnswer(answerAnchor, answer);
+              onAnchor(answerAnchor);
+            }}
+          >
+            <Send className="h-4 w-4" />
+            Post answer
+          </Button>
+          {answeredMessages.length > 0 ? (
+            <div className="mt-3 space-y-2">
+              {answeredMessages.map((answered, answeredIndex) => (
+                <p
+                  // biome-ignore lint/suspicious/noArrayIndexKey: repeated identical answers are display-only history.
+                  key={`${answeredIndex}:${answered}`}
+                  className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground"
+                >
+                  Answered: {answered}
+                </p>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ImageDiffBlock({
+  block,
+}: {
+  block: Extract<ReviewBlock, { type: "image-diff" }>;
+}) {
+  const [expanded, setExpanded] = useState<{
+    label: string;
+    attachmentId: string;
+    width: number;
+    height: number;
+  } | null>(null);
+  const images: Array<{
+    label: string;
+    ref: { attachmentId: string; width: number; height: number };
+    tone: "neutral" | "diff";
+  }> = [];
+  if (block.data.before) {
+    images.push({
+      label: "merge-base",
+      ref: block.data.before,
+      tone: "neutral",
+    });
+  }
+  if (block.data.after) {
+    images.push({
+      label: "this branch",
+      ref: block.data.after,
+      tone: "neutral",
+    });
+  }
+  if (block.data.diff) {
+    images.push({ label: "diff", ref: block.data.diff, tone: "diff" });
+  }
+  const comparisonImages = images.filter((image) => image.tone === "neutral");
+  const differenceImage = images.find((image) => image.tone === "diff");
+
+  function renderFigure(
+    image: (typeof images)[number],
+    emphasis: "comparison" | "difference",
+  ) {
+    return (
+      <figure
+        key={image.label}
+        className={`min-w-0 overflow-hidden rounded-md border bg-card ${
+          emphasis === "difference" ? "border-amber-300 bg-amber-50/30" : ""
+        }`}
+        data-visual-panel={image.label}
+      >
+        <button
+          className="block w-full bg-muted/40 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          type="button"
+          onClick={() =>
+            setExpanded({
+              label: image.label,
+              attachmentId: image.ref.attachmentId,
+              width: image.ref.width,
+              height: image.ref.height,
+            })
+          }
+        >
+          <Image
+            alt={`${block.data.name} ${image.label}`}
+            className={`h-auto w-full object-contain ${
+              emphasis === "difference" ? "max-h-[720px]" : "max-h-[640px]"
+            }`}
+            height={image.ref.height}
+            loading="lazy"
+            unoptimized
+            src={`/api/attachments/${image.ref.attachmentId}`}
+            width={image.ref.width}
+          />
+        </button>
+        <figcaption
+          className={`border-t px-3 py-2 text-sm font-medium ${
+            image.tone === "diff" ? "text-amber-800" : "text-muted-foreground"
+          }`}
+        >
+          {image.label}
+        </figcaption>
+      </figure>
+    );
+  }
+
+  return (
+    <section
+      className="-mx-3 space-y-5 border-y bg-card px-3 py-5 sm:-mx-4 sm:px-4"
+      data-visual-comparison
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-3">
+          <span className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-foreground text-background">
+            <ImageIcon className="h-4 w-4" />
+          </span>
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase text-muted-foreground">
+              Visual comparison
+            </p>
+            <h3
+              className="truncate text-xl font-semibold"
+              title={
+                block.data.baseline
+                  ? `${block.data.baseline.ref} - ${block.data.baseline.platform}`
+                  : undefined
+              }
+            >
+              {block.data.name}
+            </h3>
+          </div>
+        </div>
+        <Badge tone={imageDiffStatusTone(block.data.status)}>
+          {block.data.status}
+        </Badge>
+      </div>
+      <div
+        className={`grid gap-4 ${
+          comparisonImages.length > 1 ? "md:grid-cols-2" : ""
+        }`}
+        data-visual-primary
+      >
+        {comparisonImages.map((image) => renderFigure(image, "comparison"))}
+      </div>
+      {differenceImage ? (
+        <div data-visual-difference>
+          {renderFigure(differenceImage, "difference")}
+        </div>
+      ) : null}
+      {expanded ? (
+        <button
+          aria-label="Close image"
+          className="fixed inset-0 z-50 flex cursor-zoom-out items-center justify-center bg-black/80 p-6"
+          type="button"
+          onClick={() => setExpanded(null)}
+        >
+          <span className="absolute right-4 top-4 inline-flex h-10 w-10 items-center justify-center rounded-full bg-white text-neutral-950">
+            <X className="h-5 w-5" />
+          </span>
+          <Image
+            alt={`${block.data.name} ${expanded.label}`}
+            className="max-h-full max-w-full object-contain"
+            height={expanded.height}
+            unoptimized
+            src={`/api/attachments/${expanded.attachmentId}`}
+            width={expanded.width}
+          />
+        </button>
+      ) : null}
+    </section>
+  );
+}
+
+function imageDiffStatusTone(
+  status: "changed" | "added" | "removed",
+): BadgeTone {
+  if (status === "added") {
+    return "green";
+  }
+  if (status === "removed") {
+    return "red";
+  }
+  return "amber";
+}
+
+function useContainerWidth(ref: RefObject<HTMLElement | null>) {
+  const [width, setWidth] = useState<number | null>(null);
+
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) {
+      return;
+    }
+    setWidth(element.getBoundingClientRect().width);
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) {
+        setWidth(entry.contentRect.width);
+      }
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [ref]);
+
+  return width;
+}
+
+function DiffBlock({
+  block,
+  threads,
+  onAnchor,
+}: {
+  block: Extract<ReviewBlock, { type: "diff" }>;
+  threads: Thread[];
+  onAnchor: (anchor: ReviewAnchor) => void;
+}) {
+  const codeSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const codeSurfaceWidth = useContainerWidth(codeSurfaceRef);
+  const [mode, setMode] = useState<"split" | "unified">(block.data.mode);
+  const language = inferLanguageFromFilename(
+    block.data.filename,
+    block.data.language,
+  );
+  const rows = useMemo(
+    () =>
+      alignDiffRows(
+        block.data.before,
+        block.data.after,
+        block.data.beforeStartLine ?? 1,
+        block.data.afterStartLine ?? 1,
+      ),
+    [
+      block.data.after,
+      block.data.afterStartLine,
+      block.data.before,
+      block.data.beforeStartLine,
+    ],
+  );
+  const highlightedBefore = useMemo(
+    () => highlightCodeLines(block.data.before, language),
+    [block.data.before, language],
+  );
+  const highlightedAfter = useMemo(
+    () => highlightCodeLines(block.data.after, language),
+    [block.data.after, language],
+  );
+  useEffect(() => {
+    const stored = window.localStorage.getItem(DIFF_VIEW_MODE_STORAGE_KEY);
+    if (stored === "split" || stored === "unified") {
+      setMode(stored);
+    }
+    function syncMode(event: StorageEvent) {
+      if (
+        event.key === DIFF_VIEW_MODE_STORAGE_KEY &&
+        (event.newValue === "split" || event.newValue === "unified")
+      ) {
+        setMode(event.newValue);
+      }
+    }
+    window.addEventListener("storage", syncMode);
+    return () => window.removeEventListener("storage", syncMode);
+  }, []);
+  const isOneSided =
+    block.data.before.trim().length === 0 ||
+    block.data.after.trim().length === 0;
+  const effectiveMode =
+    isOneSided ||
+    (codeSurfaceWidth !== null && codeSurfaceWidth < SPLIT_DIFF_MIN_WIDTH)
+      ? "unified"
+      : mode;
+  const unified = effectiveMode === "unified";
+  const additions = rows.filter(
+    (row) => row.afterLine && row.kind !== "context",
+  ).length;
+  const deletions = rows.filter(
+    (row) => row.beforeLine && row.kind !== "context",
+  ).length;
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [activeAnnotation, setActiveAnnotation] = useState<number | null>(null);
+  const annotations = block.data.annotations.map((annotation, index) => ({
+    ...annotation,
+    marker: index + 1,
+  }));
+  const displayRows = useMemo(
+    () => buildDiffDisplayRows(rows, annotations, threads, expandedGroups),
+    [rows, annotations, threads, expandedGroups],
+  );
+  function toggleGroup(id: string) {
+    setExpandedGroups((current) => {
+      const next = new Set(current);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+  return (
+    <div
+      className={`grid gap-3 ${
+        annotations.length > 0 ? "2xl:grid-cols-[minmax(0,1fr)_260px]" : ""
+      }`}
+    >
+      <div
+        ref={codeSurfaceRef}
+        className="min-w-0 overflow-hidden rounded-lg border bg-card"
+        data-diff-code
+      >
+        <div className="flex items-center justify-between gap-3 border-b bg-muted/60 px-3 py-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <FileCode2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span className="truncate font-mono text-sm font-medium">
+              {block.data.filename}
+            </span>
+            {block.data.language ? (
+              <Badge className="font-mono" tone="neutral">
+                {block.data.language}
+              </Badge>
+            ) : null}
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-xs">
+              <span className="text-emerald-700">+{additions}</span>{" "}
+              <span className="text-red-700">-{deletions}</span>
+            </span>
+            {!isOneSided ? (
+              <div className="hidden rounded-md border bg-card p-0.5 sm:flex">
+                {(["split", "unified"] as const).map((item) => (
+                  <button
+                    key={item}
+                    className={`rounded px-2 py-1 text-xs transition-colors ${
+                      effectiveMode === item
+                        ? "bg-primary text-primary-foreground"
+                        : "text-muted-foreground hover:bg-accent"
+                    }`}
+                    type="button"
+                    onClick={() => {
+                      setMode(item);
+                      window.localStorage.setItem(
+                        DIFF_VIEW_MODE_STORAGE_KEY,
+                        item,
+                      );
+                    }}
+                  >
+                    {item}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </div>
+        <div className="overflow-x-auto font-mono text-[0.75rem] leading-5">
+          {displayRows.map((item) =>
+            item.type === "collapse" ? (
+              <CollapsedDiffRow
+                key={item.id}
+                count={item.count}
+                unified={unified}
+                onExpand={() => toggleGroup(item.id)}
+              />
+            ) : unified ? (
+              <UnifiedDiffRow
+                key={item.row.id}
+                block={block}
+                row={item.row}
+                highlightedAfter={highlightedAfter}
+                highlightedBefore={highlightedBefore}
+                threads={threads}
+                annotations={annotations}
+                activeAnnotation={activeAnnotation}
+                onAnchor={onAnchor}
+                onAnnotationHover={setActiveAnnotation}
+              />
+            ) : (
+              <SplitDiffRow
+                key={item.row.id}
+                block={block}
+                row={item.row}
+                highlightedAfter={highlightedAfter}
+                highlightedBefore={highlightedBefore}
+                threads={threads}
+                annotations={annotations}
+                activeAnnotation={activeAnnotation}
+                onAnchor={onAnchor}
+                onAnnotationHover={setActiveAnnotation}
+              />
+            ),
+          )}
+        </div>
+      </div>
+      <AnnotationRail
+        activeAnnotation={activeAnnotation}
+        annotations={annotations}
+        onAnnotationHover={setActiveAnnotation}
+      />
+    </div>
+  );
+}
+
+function SplitDiffRow({
+  block,
+  row,
+  highlightedAfter,
+  highlightedBefore,
+  threads,
+  annotations,
+  activeAnnotation,
+  onAnchor,
+  onAnnotationHover,
+}: {
+  block: Extract<ReviewBlock, { type: "diff" }>;
+  row: DiffRow;
+  highlightedAfter: HighlightLine[];
+  highlightedBefore: HighlightLine[];
+  threads: Thread[];
+  annotations: NumberedAnnotation[];
+  activeAnnotation: number | null;
+  onAnchor: (anchor: ReviewAnchor) => void;
+  onAnnotationHover: (marker: number | null) => void;
+}) {
+  const beforeMarker = firstAnnotationMarker(
+    annotations,
+    "before",
+    row.beforeLine,
+  );
+  const afterMarker = firstAnnotationMarker(
+    annotations,
+    "after",
+    row.afterLine,
+  );
+  const active = [beforeMarker, afterMarker].some(
+    (marker) => marker && marker === activeAnnotation,
+  );
+  return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: hover-only annotation association; line buttons remain keyboard targets.
+    <div
+      className={`grid min-w-[760px] grid-cols-[64px_minmax(0,1fr)_64px_minmax(0,1fr)] border-b last:border-b-0 ${
+        active ? "bg-amber-50/50" : ""
+      }`}
+      role="presentation"
+      onMouseEnter={() =>
+        onAnnotationHover(beforeMarker ?? afterMarker ?? null)
+      }
+      onMouseLeave={() => onAnnotationHover(null)}
+    >
+      <LineButton
+        id={lineTargetId(block.id, "before", row.beforeLine)}
+        line={row.beforeLine}
+        side="before"
+        threadIds={lineThreadIds(threads, "before", row.beforeLine)}
+        marker={beforeMarker}
+        onClick={() =>
+          row.beforeLine
+            ? onAnchor({
+                blockId: block.id,
+                kind: "line",
+                filePath: block.data.filename,
+                line: { side: "before", start: row.beforeLine },
+              })
+            : undefined
+        }
+      />
+      <CodeCell
+        tokens={
+          row.beforeIndex === undefined
+            ? []
+            : highlightedBefore[row.beforeIndex]
+        }
+        tone={
+          row.kind === "remove" || row.kind === "modify" ? "remove" : "context"
+        }
+        value={row.before}
+        sign={row.kind === "remove" || row.kind === "modify" ? "-" : " "}
+      />
+      <LineButton
+        id={lineTargetId(block.id, "after", row.afterLine)}
+        line={row.afterLine}
+        side="after"
+        threadIds={lineThreadIds(threads, "after", row.afterLine)}
+        marker={afterMarker}
+        onClick={() =>
+          row.afterLine
+            ? onAnchor({
+                blockId: block.id,
+                kind: "line",
+                filePath: block.data.filename,
+                line: { side: "after", start: row.afterLine },
+              })
+            : undefined
+        }
+      />
+      <CodeCell
+        tokens={
+          row.afterIndex === undefined ? [] : highlightedAfter[row.afterIndex]
+        }
+        tone={row.kind === "add" || row.kind === "modify" ? "add" : "context"}
+        value={row.after}
+        sign={row.kind === "add" || row.kind === "modify" ? "+" : " "}
+      />
+    </div>
+  );
+}
+
+function UnifiedDiffRow({
+  block,
+  row,
+  highlightedAfter,
+  highlightedBefore,
+  threads,
+  annotations,
+  activeAnnotation,
+  onAnchor,
+  onAnnotationHover,
+}: {
+  block: Extract<ReviewBlock, { type: "diff" }>;
+  row: DiffRow;
+  highlightedAfter: HighlightLine[];
+  highlightedBefore: HighlightLine[];
+  threads: Thread[];
+  annotations: NumberedAnnotation[];
+  activeAnnotation: number | null;
+  onAnchor: (anchor: ReviewAnchor) => void;
+  onAnnotationHover: (marker: number | null) => void;
+}) {
+  if (row.kind === "modify") {
+    return (
+      <>
+        <UnifiedDiffLine
+          block={block}
+          row={row}
+          side="before"
+          value={row.before}
+          tokens={
+            row.beforeIndex === undefined
+              ? []
+              : highlightedBefore[row.beforeIndex]
+          }
+          tone="remove"
+          sign="-"
+          threads={threads}
+          annotations={annotations}
+          activeAnnotation={activeAnnotation}
+          onAnchor={onAnchor}
+          onAnnotationHover={onAnnotationHover}
+        />
+        <UnifiedDiffLine
+          block={block}
+          row={row}
+          side="after"
+          value={row.after}
+          tokens={
+            row.afterIndex === undefined ? [] : highlightedAfter[row.afterIndex]
+          }
+          tone="add"
+          sign="+"
+          threads={threads}
+          annotations={annotations}
+          activeAnnotation={activeAnnotation}
+          onAnchor={onAnchor}
+          onAnnotationHover={onAnnotationHover}
+        />
+      </>
+    );
+  }
+  const side = row.kind === "remove" ? "before" : "after";
+  const value = row.kind === "remove" ? row.before : row.after;
+  const tokens =
+    row.kind === "remove"
+      ? row.beforeIndex === undefined
+        ? []
+        : highlightedBefore[row.beforeIndex]
+      : row.afterIndex === undefined
+        ? []
+        : highlightedAfter[row.afterIndex];
+  const tone = row.kind === "add" ? "add" : row.kind;
+  const sign = row.kind === "add" ? "+" : row.kind === "remove" ? "-" : " ";
+  return (
+    <UnifiedDiffLine
+      block={block}
+      row={row}
+      side={side}
+      value={value}
+      tokens={tokens}
+      tone={tone}
+      sign={sign}
+      threads={threads}
+      annotations={annotations}
+      activeAnnotation={activeAnnotation}
+      onAnchor={onAnchor}
+      onAnnotationHover={onAnnotationHover}
+    />
+  );
+}
+
+function UnifiedDiffLine({
+  block,
+  row,
+  side,
+  value,
+  tokens,
+  tone,
+  sign,
+  threads,
+  annotations,
+  activeAnnotation,
+  onAnchor,
+  onAnnotationHover,
+}: {
+  block: Extract<ReviewBlock, { type: "diff" }>;
+  row: DiffRow;
+  side: "before" | "after";
+  value: string;
+  tokens?: HighlightLine;
+  tone: "context" | "add" | "remove";
+  sign: string;
+  threads: Thread[];
+  annotations: NumberedAnnotation[];
+  activeAnnotation: number | null;
+  onAnchor: (anchor: ReviewAnchor) => void;
+  onAnnotationHover: (marker: number | null) => void;
+}) {
+  const line = side === "before" ? row.beforeLine : row.afterLine;
+  const marker = firstAnnotationMarker(annotations, side, line);
+  return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: hover-only annotation association; line buttons remain keyboard targets.
+    <div
+      className={`grid min-w-[560px] grid-cols-[64px_minmax(0,1fr)] border-b last:border-b-0 ${
+        marker && marker === activeAnnotation ? "bg-amber-50/50" : ""
+      }`}
+      role="presentation"
+      onMouseEnter={() => onAnnotationHover(marker ?? null)}
+      onMouseLeave={() => onAnnotationHover(null)}
+    >
+      <LineButton
+        id={lineTargetId(block.id, side, line)}
+        line={line}
+        threadIds={lineThreadIds(threads, side, line)}
+        marker={marker}
+        side={side}
+        onClick={() =>
+          line
+            ? onAnchor({
+                blockId: block.id,
+                kind: "line",
+                filePath: block.data.filename,
+                line: { side, start: line },
+              })
+            : undefined
+        }
+      />
+      <CodeCell tokens={tokens} tone={tone} sign={sign} value={value} />
+    </div>
+  );
+}
+
+function AnnotatedCodeBlock({
+  block,
+  threads,
+  onAnchor,
+}: {
+  block: Extract<ReviewBlock, { type: "annotated-code" }>;
+  threads: Thread[];
+  onAnchor: (anchor: ReviewAnchor) => void;
+}) {
+  const startLine = block.data.startLine;
+  const [expanded, setExpanded] = useState(false);
+  const [activeAnnotation, setActiveAnnotation] = useState<number | null>(null);
+  const lines = block.data.code.split("\n");
+  const language = inferLanguageFromFilename(
+    block.data.filename,
+    block.data.language,
+  );
+  const highlightedLines = useMemo(
+    () => highlightCodeLines(block.data.code, language),
+    [block.data.code, language],
+  );
+  const visibleLines = expanded ? lines : lines.slice(0, 30);
+  const annotations = block.data.annotations.map((annotation, index) => ({
+    ...annotation,
+    marker: index + 1,
+  }));
+  return (
+    <div
+      className={`grid gap-3 ${
+        annotations.length > 0 ? "2xl:grid-cols-[minmax(0,1fr)_260px]" : ""
+      }`}
+    >
+      <div className="overflow-hidden rounded-lg border bg-card">
+        <div className="flex items-center justify-between gap-3 border-b bg-muted/60 px-3 py-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <Code2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span className="truncate font-mono text-sm font-medium">
+              {block.data.filename}
+            </span>
+            {block.data.language ? (
+              <Badge className="font-mono" tone="neutral">
+                {block.data.language}
+              </Badge>
+            ) : null}
+          </div>
+          <span className="font-mono text-xs text-muted-foreground">
+            {lines.length} lines
+          </span>
+        </div>
+        <div className="overflow-x-auto font-mono text-[0.75rem] leading-5">
+          {visibleLines.map((line, index) => {
+            const lineNumber = startLine + index;
+            const marker = firstAnnotationMarker(
+              annotations,
+              "after",
+              lineNumber,
+            );
+            return (
+              // biome-ignore lint/a11y/noStaticElementInteractions: hover-only annotation association; line buttons remain keyboard targets.
+              <div
+                key={`${lineNumber}:${line}`}
+                className={`grid min-w-[560px] grid-cols-[64px_minmax(0,1fr)] border-b last:border-b-0 ${
+                  marker && marker === activeAnnotation ? "bg-amber-50/50" : ""
+                }`}
+                role="presentation"
+                onMouseEnter={() => setActiveAnnotation(marker ?? null)}
+                onMouseLeave={() => setActiveAnnotation(null)}
+              >
+                <LineButton
+                  id={lineTargetId(block.id, "after", lineNumber)}
+                  line={lineNumber}
+                  threadIds={lineThreadIds(threads, "after", lineNumber)}
+                  marker={marker}
+                  side="after"
+                  onClick={() =>
+                    onAnchor({
+                      blockId: block.id,
+                      kind: "line",
+                      filePath: block.data.filename,
+                      line: { side: "after", start: lineNumber },
+                    })
+                  }
+                />
+                <CodeCell
+                  tokens={highlightedLines[index]}
+                  tone="context"
+                  value={line}
+                />
+              </div>
+            );
+          })}
+        </div>
+        {!expanded && lines.length > visibleLines.length ? (
+          <button
+            className="w-full border-t bg-muted/40 px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted"
+            type="button"
+            onClick={() => setExpanded(true)}
+          >
+            Show all {lines.length} lines
+          </button>
+        ) : null}
+      </div>
+      <AnnotationRail
+        activeAnnotation={activeAnnotation}
+        annotations={annotations}
+        onAnnotationHover={setActiveAnnotation}
+      />
+    </div>
+  );
+}
+
+type DiffDisplayRow =
+  | { type: "row"; row: DiffRow }
+  | { type: "collapse"; id: string; count: number };
+
+type DiffRow = {
+  id: string;
+  beforeLine?: number;
+  afterLine?: number;
+  beforeIndex?: number;
+  afterIndex?: number;
+  before: string;
+  after: string;
+  kind: "context" | "add" | "remove" | "modify";
+};
+
+function alignDiffRows(
+  beforeText: string,
+  afterText: string,
+  beforeStartLine: number,
+  afterStartLine: number,
+) {
+  const rows: DiffRow[] = [];
+  let beforeLine = beforeStartLine;
+  let afterLine = afterStartLine;
+  let beforeIndex = 0;
+  let afterIndex = 0;
+  const pendingRemoved: Array<{
+    before: string;
+    beforeLine: number;
+    beforeIndex: number;
+  }> = [];
+
+  function flushRemoved() {
+    while (pendingRemoved.length > 0) {
+      const removed = pendingRemoved.shift();
+      if (!removed) {
+        continue;
+      }
+      rows.push({
+        id: `r:${removed.beforeLine}:${removed.before}`,
+        beforeLine: removed.beforeLine,
+        beforeIndex: removed.beforeIndex,
+        before: removed.before,
+        after: "",
+        kind: "remove",
+      });
+    }
+  }
+
+  for (const part of diffLines(beforeText, afterText)) {
+    const lines = part.value.replace(/\n$/, "").split("\n");
+    for (const line of lines) {
+      if (part.added) {
+        const removed = pendingRemoved.shift();
+        if (removed) {
+          rows.push({
+            id: `m:${removed.beforeLine}:${afterLine}:${removed.before}:${line}`,
+            beforeLine: removed.beforeLine,
+            afterLine,
+            beforeIndex: removed.beforeIndex,
+            afterIndex,
+            before: removed.before,
+            after: line,
+            kind: "modify",
+          });
+        } else {
+          rows.push({
+            id: `a:${afterLine}:${line}`,
+            afterLine,
+            afterIndex,
+            before: "",
+            after: line,
+            kind: "add",
+          });
+        }
+        afterLine += 1;
+        afterIndex += 1;
+      } else if (part.removed) {
+        pendingRemoved.push({
+          beforeLine,
+          before: line,
+          beforeIndex,
+        });
+        beforeLine += 1;
+        beforeIndex += 1;
+      } else {
+        flushRemoved();
+        rows.push({
+          id: `c:${beforeLine}:${afterLine}:${line}`,
+          beforeLine,
+          afterLine,
+          beforeIndex,
+          afterIndex,
+          before: line,
+          after: line,
+          kind: "context",
+        });
+        beforeLine += 1;
+        afterLine += 1;
+        beforeIndex += 1;
+        afterIndex += 1;
+      }
+    }
+  }
+  flushRemoved();
+  return rows;
+}
+
+function buildDiffDisplayRows(
+  rows: DiffRow[],
+  annotations: NumberedAnnotation[],
+  threads: Thread[],
+  expandedGroups: Set<string>,
+): DiffDisplayRow[] {
+  const contextRunThreshold = 8;
+  const contextEdge = 3;
+  const output: DiffDisplayRow[] = [];
+  let index = 0;
+
+  while (index < rows.length) {
+    const row = rows[index];
+    if (row?.kind !== "context") {
+      output.push({ type: "row", row });
+      index += 1;
+      continue;
+    }
+
+    const start = index;
+    while (index < rows.length && rows[index]?.kind === "context") {
+      index += 1;
+    }
+    const run = rows.slice(start, index);
+    const hasProtectedRow = run.some((runRow) =>
+      isProtectedDiffRow(runRow, annotations, threads),
+    );
+    const collapseId = `collapse:${start}:${index}`;
+
+    if (
+      run.length <= contextRunThreshold ||
+      hasProtectedRow ||
+      expandedGroups.has(collapseId)
+    ) {
+      output.push(
+        ...run.map((runRow) => ({ type: "row" as const, row: runRow })),
+      );
+      continue;
+    }
+
+    const head = run.slice(0, contextEdge);
+    const tail = run.slice(-contextEdge);
+    const hiddenCount = run.length - head.length - tail.length;
+    output.push(
+      ...head.map((runRow) => ({ type: "row" as const, row: runRow })),
+    );
+    output.push({ type: "collapse", id: collapseId, count: hiddenCount });
+    output.push(
+      ...tail.map((runRow) => ({ type: "row" as const, row: runRow })),
+    );
+  }
+
+  return output;
+}
+
+function isProtectedDiffRow(
+  row: DiffRow,
+  annotations: NumberedAnnotation[],
+  threads: Thread[],
+) {
+  return (
+    firstAnnotationMarker(annotations, "before", row.beforeLine) !==
+      undefined ||
+    firstAnnotationMarker(annotations, "after", row.afterLine) !== undefined ||
+    lineThreadIds(threads, "before", row.beforeLine).length > 0 ||
+    lineThreadIds(threads, "after", row.afterLine).length > 0
+  );
+}
+
+function CollapsedDiffRow({
+  count,
+  unified,
+  onExpand,
+}: {
+  count: number;
+  unified: boolean;
+  onExpand: () => void;
+}) {
+  return (
+    <button
+      className={`grid w-full min-w-[560px] border-y bg-muted/40 text-center text-xs font-medium text-muted-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+        unified
+          ? "grid-cols-[64px_minmax(0,1fr)]"
+          : "grid-cols-[64px_minmax(0,1fr)_64px_minmax(0,1fr)]"
+      }`}
+      type="button"
+      onClick={onExpand}
+    >
+      <span />
+      <span className={unified ? "px-3 py-2" : "col-span-3 px-3 py-2"}>
+        · {count} unchanged lines ·
+      </span>
+    </button>
+  );
+}
+
+function LineButton({
+  id,
+  line,
+  side,
+  threadIds,
+  marker,
+  onClick,
+}: {
+  id?: string;
+  line?: number;
+  side: "before" | "after";
+  threadIds: string[];
+  marker?: number;
+  onClick: () => void;
+}) {
+  const count = threadIds.length;
+  return (
+    <button
+      id={id}
+      className="group/gutter flex items-center justify-end gap-1 bg-muted/60 px-2 py-1 text-right tabular-nums text-muted-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      disabled={!line}
+      title={`Comment on ${side} line ${line}`}
+      type="button"
+      onClick={() => {
+        if (count > 0) {
+          scrollToThread(threadIds[0]);
+          return;
+        }
+        onClick();
+      }}
+    >
+      {marker ? (
+        <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-amber-100 text-[10px] font-semibold text-amber-800">
+          {marker}
+        </span>
+      ) : null}
+      {count ? (
+        <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-1 text-[10px] font-semibold text-amber-800">
+          <MessageSquare className="h-3 w-3" />
+          {count}
+        </span>
+      ) : null}
+      <span>{line ?? ""}</span>
+      {line ? (
+        <span className="ml-1 hidden text-primary group-hover/gutter:inline">
+          +
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
+function CodeCell({
+  value,
+  tone,
+  sign,
+  tokens,
+}: {
+  value: string;
+  tone: "context" | "add" | "remove";
+  sign?: string;
+  tokens?: HighlightLine;
+}) {
+  const toneClass =
+    tone === "add"
+      ? "bg-emerald-50/70 text-emerald-950"
+      : tone === "remove"
+        ? "bg-red-50/70 text-red-950"
+        : "bg-card";
+  return (
+    <code
+      className={`flex min-w-0 overflow-hidden whitespace-pre-wrap px-3 py-1 ${toneClass}`}
+      data-diff-code-cell
+    >
+      <span
+        className={`mr-2 w-3 shrink-0 ${
+          sign === "+"
+            ? "text-emerald-700"
+            : sign === "-"
+              ? "text-red-700"
+              : "text-muted-foreground"
+        }`}
+      >
+        {sign ?? " "}
+      </span>
+      <span className="syntax-highlight min-w-0 break-words">
+        {tokens ? renderHighlightLine(tokens) : value}
+      </span>
+    </code>
+  );
+}
+
+type NumberedAnnotation = Extract<
+  ReviewBlock,
+  { type: "diff" | "annotated-code" }
+>["data"]["annotations"][number] & { marker: number };
+
+function firstAnnotationMarker(
+  annotations: NumberedAnnotation[],
+  side: "before" | "after",
+  line?: number,
+) {
+  if (!line) {
+    return undefined;
+  }
+  return annotations.find(
+    (annotation) =>
+      annotation.side === side && lineInRange(line, annotation.lines),
+  )?.marker;
+}
+
+function AnnotationRail({
+  activeAnnotation,
+  annotations,
+  onAnnotationHover,
+}: {
+  activeAnnotation: number | null;
+  annotations: NumberedAnnotation[];
+  onAnnotationHover: (marker: number | null) => void;
+}) {
+  if (annotations.length === 0) {
+    return null;
+  }
+  return (
+    <div className="grid gap-2 sm:grid-cols-2 2xl:block 2xl:space-y-2 2xl:pt-10">
+      {annotations.map((annotation) => (
+        // biome-ignore lint/a11y/noStaticElementInteractions: hover-only annotation association; note content is not an interactive control.
+        <div
+          key={`${annotation.marker}:${annotation.side}:${annotation.lines}`}
+          className={`rounded-lg border bg-card p-3 text-sm shadow-sm transition-colors ${
+            activeAnnotation === annotation.marker
+              ? "border-amber-300 bg-amber-50/70"
+              : ""
+          }`}
+          role="presentation"
+          onMouseEnter={() => onAnnotationHover(annotation.marker)}
+          onMouseLeave={() => onAnnotationHover(null)}
+        >
+          <div className="mb-1 flex items-center gap-2 text-xs font-medium text-amber-800">
+            <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-amber-100">
+              {annotation.marker}
+            </span>
+            <span className="font-mono">
+              {annotation.side}:{annotation.lines}
+            </span>
+          </div>
+          {annotation.label ? (
+            <div className="font-medium">{annotation.label}</div>
+          ) : null}
+          <p className="text-muted-foreground">{annotation.note}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+type HighlightToken = {
+  className?: string;
+  text: string;
+};
+
+type HighlightLine = HighlightToken[];
+
+function highlightCode(value: string, language?: string) {
+  return renderHighlightLine(highlightCodeLine(value, language));
+}
+
+function highlightCodeLines(value: string, language?: string): HighlightLine[] {
+  const normalizedLanguage = normalizeHighlightLanguage(language);
+  try {
+    const tree = normalizedLanguage
+      ? lowlight.highlight(normalizedLanguage, value)
+      : { children: [{ type: "text", value }] };
+    const lines: HighlightLine[] = [[]];
+    for (const token of flattenLowlightNodes(tree.children)) {
+      const parts = token.text.split("\n");
+      for (const [index, part] of parts.entries()) {
+        if (index > 0) {
+          lines.push([]);
+        }
+        if (part) {
+          lines[lines.length - 1]?.push({ ...token, text: part });
+        }
+      }
+    }
+    return lines.length > 0 ? lines : [[]];
+  } catch {
+    return value.split("\n").map((text) => [{ text }]);
+  }
+}
+
+function highlightCodeLine(value: string, language?: string): HighlightLine {
+  const normalizedLanguage = normalizeHighlightLanguage(language);
+  try {
+    const tree = normalizedLanguage
+      ? lowlight.highlight(normalizedLanguage, value)
+      : lowlight.highlightAuto(value);
+    return flattenLowlightNodes(tree.children);
+  } catch {
+    return [{ text: value }];
+  }
+}
+
+type LowlightNode = {
+  type: string;
+  tagName?: string;
+  value?: string;
+  properties?: { className?: string[] };
+  children?: LowlightNode[];
+};
+
+function flattenLowlightNodes(
+  nodes: LowlightNode[] = [],
+  inheritedClassName?: string,
+): HighlightToken[] {
+  return nodes.flatMap((node) => {
+    if (node.type === "text") {
+      return [{ className: inheritedClassName, text: node.value ?? "" }];
+    }
+    const className = node.properties?.className?.join(" ");
+    return flattenLowlightNodes(
+      node.children,
+      [inheritedClassName, className].filter(Boolean).join(" ") || undefined,
+    );
+  });
+}
+
+function renderHighlightLine(tokens: HighlightLine = []): ReactNode[] {
+  return tokens.map((token, index) =>
+    token.className ? (
+      // biome-ignore lint/suspicious/noArrayIndexKey: lowlight token spans are stateless render output.
+      <span className={token.className} key={`${token.className}:${index}`}>
+        {token.text}
+      </span>
+    ) : (
+      token.text
+    ),
+  );
+}
+
+function normalizeHighlightLanguage(language?: string) {
+  const normalized = language?.toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized === "ts" || normalized === "tsx") {
+    return "typescript";
+  }
+  if (normalized === "js" || normalized === "jsx") {
+    return "javascript";
+  }
+  if (normalized === "yml") {
+    return "yaml";
+  }
+  return normalized;
+}
+
+function inferLanguageFromFilename(filename: string, language?: string) {
+  if (language) {
+    return normalizeHighlightLanguage(language);
+  }
+  const extension = filename.split(".").pop()?.toLowerCase();
+  const map: Record<string, string> = {
+    cjs: "javascript",
+    css: "css",
+    html: "xml",
+    js: "javascript",
+    json: "json",
+    jsx: "javascript",
+    md: "markdown",
+    mjs: "javascript",
+    rs: "rust",
+    sh: "bash",
+    sql: "sql",
+    ts: "typescript",
+    tsx: "typescript",
+    yaml: "yaml",
+    yml: "yaml",
+  };
+  return extension ? map[extension] : undefined;
+}
+
+function lineInRange(line: number, range: string) {
+  const [start, end] = range.split("-").map(Number);
+  return line >= start && line <= (end ?? start);
+}
+
+function lineThreadIds(
+  threads: Thread[],
+  side: "before" | "after",
+  line?: number,
+) {
+  if (!line) {
+    return [];
+  }
+  return threads
+    .filter((thread) => {
+      const anchor = thread.root.anchor;
+      if (anchor?.kind !== "line" || !anchor.line) {
+        return false;
+      }
+      return (
+        anchor.line.side === side &&
+        line >= anchor.line.start &&
+        line <= (anchor.line.end ?? anchor.line.start)
+      );
+    })
+    .map((thread) => thread.root.id);
+}
+
+function MermaidBlock({
+  source,
+  caption,
+}: {
+  source: string;
+  caption?: string;
+}) {
+  const [svg, setSvg] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setSvg("");
+    setError(null);
+    import("mermaid").then(async ({ default: mermaid }) => {
+      try {
+        mermaid.initialize({
+          securityLevel: "strict",
+          startOnLoad: false,
+          theme: "neutral",
+        });
+        const rendered = await mermaid.render(
+          `diagram-${hash(source)}`,
+          source,
+        );
+        if (!cancelled) {
+          setSvg(sanitizeSvg(rendered.svg));
+        }
+      } catch (renderError) {
+        if (!cancelled) {
+          setError(
+            renderError instanceof Error
+              ? renderError.message
+              : "Could not render diagram",
+          );
+        }
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [source]);
+
+  return (
+    <figure className="group relative rounded-lg border bg-card p-4">
+      {svg ? (
+        <>
+          <button
+            aria-label="Expand diagram"
+            className="absolute right-3 top-3 z-10 inline-flex h-8 w-8 items-center justify-center rounded-full border bg-card/90 text-muted-foreground opacity-0 shadow-sm transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100"
+            title="Expand diagram"
+            type="button"
+            onClick={() => setExpanded(true)}
+          >
+            <ExternalLink className="h-4 w-4" />
+          </button>
+          <div
+            aria-label={caption ?? "Mermaid diagram"}
+            role="img"
+            className="mx-auto max-w-full overflow-x-auto [&_svg]:mx-auto [&_svg]:h-auto [&_svg]:max-w-full"
+            // SVG diagrams must be injected inline so viewBox sizing works.
+            // biome-ignore lint/security/noDangerouslySetInnerHtml: SVG diagrams must be injected inline so viewBox sizing works.
+            dangerouslySetInnerHTML={{ __html: svg }}
+          />
+        </>
+      ) : error ? (
+        <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+          <div className="font-medium">Diagram could not be rendered</div>
+          <p className="mt-1">{error}</p>
+          <details className="mt-2">
+            <summary className="cursor-pointer">Source</summary>
+            <pre className="mt-2 overflow-x-auto font-mono text-xs">
+              {source}
+            </pre>
+          </details>
+        </div>
+      ) : (
+        <div className="h-56 animate-pulse rounded-md bg-muted" />
+      )}
+      {caption ? (
+        <figcaption className="mt-3 text-center text-sm text-muted-foreground">
+          {caption}
+        </figcaption>
+      ) : null}
+      {expanded ? (
+        <button
+          aria-label="Close diagram"
+          className="fixed inset-0 z-50 flex cursor-zoom-out items-center justify-center bg-black/80 p-6"
+          type="button"
+          onClick={() => setExpanded(false)}
+        >
+          <span className="absolute right-4 top-4 inline-flex h-10 w-10 items-center justify-center rounded-full bg-white text-neutral-950">
+            <X className="h-5 w-5" />
+          </span>
+          <span
+            aria-label={caption ?? "Mermaid diagram"}
+            className="max-h-full max-w-full overflow-auto rounded-lg bg-white p-6 [&_svg]:h-auto [&_svg]:max-h-[calc(100vh-6rem)] [&_svg]:max-w-[calc(100vw-6rem)]"
+            role="img"
+            // SVG diagrams must be injected inline so viewBox sizing works.
+            // biome-ignore lint/security/noDangerouslySetInnerHtml: SVG diagrams must be injected inline so viewBox sizing works.
+            dangerouslySetInnerHTML={{ __html: svg }}
+          />
+        </button>
+      ) : null}
+    </figure>
+  );
+}
+
+function sanitizeSvg(svg: string) {
+  const parser = new DOMParser();
+  const document = parser.parseFromString(svg, "image/svg+xml");
+  for (const element of Array.from(
+    document.querySelectorAll("script, foreignObject"),
+  )) {
+    element.remove();
+  }
+  for (const element of Array.from(document.querySelectorAll("*"))) {
+    for (const attribute of Array.from(element.attributes)) {
+      const name = attribute.name.toLowerCase();
+      const value = attribute.value.trim().toLowerCase();
+      if (
+        name.startsWith("on") ||
+        ((name === "href" || name.endsWith(":href")) &&
+          value.startsWith("javascript:"))
+      ) {
+        element.removeAttribute(attribute.name);
+      }
+    }
+  }
+  return new XMLSerializer().serializeToString(document.documentElement);
+}
+
+function Composer({
+  anchor,
+  message,
+  resolutionTarget,
+  pending,
+  onAnchor,
+  onMessage,
+  onResolutionTarget,
+  onSubmit,
+}: {
+  anchor: ReviewAnchor | null;
+  message: string;
+  resolutionTarget: "agent" | "human";
+  pending: boolean;
+  onAnchor: (anchor: ReviewAnchor | null) => void;
+  onMessage: (message: string) => void;
+  onResolutionTarget: (target: "agent" | "human") => void;
+  onSubmit: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const label = anchorLabel(anchor);
+  useEffect(() => {
+    if (message || anchor) {
+      setExpanded(true);
+    }
+  }, [message, anchor]);
+
+  return (
+    <div className="rounded-lg border bg-card p-4 shadow-sm">
+      {!expanded ? (
+        <button
+          className="w-full rounded-md border bg-background px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          type="button"
+          onClick={() => setExpanded(true)}
+        >
+          Add a comment...
+        </button>
+      ) : (
+        <>
+          <div className="mb-3 flex items-center justify-between gap-3 text-sm">
+            <span className="font-medium">New comment</span>
+            <button
+              className="inline-flex min-w-0 items-center gap-1 rounded-full border bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              title="Clear anchor"
+              type="button"
+              onClick={() => onAnchor(null)}
+            >
+              <span className="truncate">{label}</span>
+              {anchor ? <X className="h-3 w-3" /> : null}
+            </button>
+          </div>
+          <textarea
+            aria-label="Comment text"
+            className="min-h-28 w-full resize-y rounded-md border bg-card p-3 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring"
+            value={message}
+            onChange={(event) => onMessage(event.target.value)}
+          />
+          <div className="mt-3 rounded-lg border bg-muted/30 p-1">
+            <div className="grid grid-cols-2 gap-1 text-sm">
+              <button
+                className={`rounded-md px-3 py-2 transition-colors ${
+                  resolutionTarget === "agent"
+                    ? "bg-card text-foreground shadow-sm"
+                    : "text-muted-foreground hover:bg-accent"
+                }`}
+                type="button"
+                onClick={() => onResolutionTarget("agent")}
+              >
+                <Bot className="mr-1 inline h-4 w-4" />
+                Agent should fix
+              </button>
+              <button
+                className={`rounded-md px-3 py-2 transition-colors ${
+                  resolutionTarget === "human"
+                    ? "bg-card text-foreground shadow-sm"
+                    : "text-muted-foreground hover:bg-accent"
+                }`}
+                type="button"
+                onClick={() => onResolutionTarget("human")}
+              >
+                <MessageSquare className="mr-1 inline h-4 w-4" />
+                FYI for humans
+              </button>
+            </div>
+            <p className="px-2 py-1 text-xs text-muted-foreground">
+              {resolutionTarget === "agent"
+                ? "The agent will pull this and act on it."
+                : "Visible context for humans; the agent will not act."}
+            </p>
+          </div>
+          <Button className="mt-3 w-full" disabled={pending} onClick={onSubmit}>
+            {pending ? "Posting..." : "Post comment"}
+          </Button>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ThreadsSidebar({
+  justSynced,
+  reconnecting,
+  lastPostedThreadId,
+  reviewId,
+  threads,
+  onRefresh,
+  onStatus,
+}: {
+  justSynced: boolean;
+  reconnecting: boolean;
+  lastPostedThreadId: string | null;
+  reviewId: string;
+  threads: Thread[];
+  onRefresh: () => Promise<void>;
+  onStatus: (commentId: string, status: "open" | "resolved") => void;
+}) {
+  const [replyByThread, setReplyByThread] = useState<Record<string, string>>(
+    {},
+  );
+  const [openReply, setOpenReply] = useState<string | null>(null);
+  const [pendingReply, setPendingReply] = useState<string | null>(null);
+  const [showResolved, setShowResolved] = useState(false);
+  useEffect(() => {
+    if (lastPostedThreadId) {
+      scrollToThread(lastPostedThreadId);
+    }
+  }, [lastPostedThreadId]);
+
+  async function submitReply(thread: Thread) {
+    const threadId = thread.root.id;
+    const message = replyByThread[threadId]?.trim();
+    if (!message) {
+      return;
+    }
+    setPendingReply(threadId);
+    try {
+      await fetch(`/api/reviews/${reviewId}/comments`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          message,
+          parentCommentId: threadId,
+          resolutionTarget: thread.root.resolutionTarget,
+        }),
+      });
+      setReplyByThread((current) => ({ ...current, [threadId]: "" }));
+      setOpenReply(null);
+      await onRefresh();
+    } finally {
+      setPendingReply(null);
+    }
+  }
+  const groups = [
+    {
+      label: "Needs agent",
+      threads: threads.filter(
+        (thread) =>
+          thread.root.status === "open" &&
+          thread.root.resolutionTarget === "agent",
+      ),
+    },
+    {
+      label: "FYI for humans",
+      threads: threads.filter(
+        (thread) =>
+          thread.root.status === "open" &&
+          thread.root.resolutionTarget === "human",
+      ),
+    },
+    {
+      label: "Resolved",
+      threads: threads.filter((thread) => thread.root.status === "resolved"),
+      collapsed: !showResolved,
+    },
+  ];
+
+  return (
+    <div className="rounded-lg border bg-card shadow-sm">
+      <div className="flex items-center justify-between border-b px-4 py-3">
+        <span className="font-semibold">Threads</span>
+        <span
+          className={`text-xs text-muted-foreground transition-opacity ${
+            justSynced || reconnecting ? "opacity-100" : "opacity-0"
+          }`}
+        >
+          {reconnecting ? "reconnecting..." : "updated just now"}
+        </span>
+      </div>
+      <div className="divide-y">
+        {groups.map((group) => (
+          <section key={group.label} className="p-4">
+            <button
+              className="mb-3 flex w-full items-center justify-between text-left text-sm font-semibold"
+              type="button"
+              onClick={() =>
+                group.label === "Resolved"
+                  ? setShowResolved((value) => !value)
+                  : undefined
+              }
+            >
+              <span className="flex items-center gap-2">
+                {group.label}
+                <Badge>{group.threads.length}</Badge>
+              </span>
+              {group.label === "Resolved" ? (
+                <ChevronDown
+                  className={`h-4 w-4 transition-transform ${showResolved ? "rotate-180" : ""}`}
+                />
+              ) : null}
+            </button>
+            {group.collapsed ? null : (
+              <div className="space-y-3">
+                {group.threads.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Nothing here.</p>
+                ) : (
+                  group.threads.map((thread) => (
+                    <ThreadCard
+                      key={thread.root.id}
+                      thread={thread}
+                      openReply={openReply === thread.root.id}
+                      pendingReply={pendingReply === thread.root.id}
+                      reply={replyByThread[thread.root.id] ?? ""}
+                      onOpenReply={() => setOpenReply(thread.root.id)}
+                      onReply={(value) =>
+                        setReplyByThread((current) => ({
+                          ...current,
+                          [thread.root.id]: value,
+                        }))
+                      }
+                      onSubmitReply={() => submitReply(thread)}
+                      onStatus={onStatus}
+                    />
+                  ))
+                )}
+              </div>
+            )}
+          </section>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ThreadCard({
+  thread,
+  openReply,
+  pendingReply,
+  reply,
+  onOpenReply,
+  onReply,
+  onSubmitReply,
+  onStatus,
+}: {
+  thread: Thread;
+  openReply: boolean;
+  pendingReply: boolean;
+  reply: string;
+  onOpenReply: () => void;
+  onReply: (value: string) => void;
+  onSubmitReply: () => void;
+  onStatus: (commentId: string, status: "open" | "resolved") => void;
+}) {
+  const author = thread.root.authorName ?? thread.root.authorEmail ?? "Agent";
+  const targetId = anchorTargetId(thread.root.anchor);
+  return (
+    <div
+      id={`thread-${thread.root.id}`}
+      className={`rounded-lg border p-3 ${thread.root.status === "resolved" ? "bg-muted/40 opacity-75" : "bg-card"}`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <Avatar name={author} agent={thread.root.createdBy === "agent"} />
+          <div className="min-w-0">
+            <div className="truncate text-sm font-medium">{author}</div>
+            <div
+              className="text-xs text-muted-foreground"
+              title={formatAbsoluteTime(thread.root.createdAt)}
+            >
+              <RelativeTime value={thread.root.createdAt} />
+            </div>
+          </div>
+        </div>
+        {!thread.root.consumedAt ? (
+          <span
+            className="mt-1 h-2 w-2 shrink-0 rounded-full bg-amber-400"
+            title="Agent has not pulled this yet"
+          />
+        ) : null}
+      </div>
+      <a
+        className="mt-3 inline-flex max-w-full items-center gap-1 rounded-full border bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        href={targetId ? `#${targetId}` : "#"}
+        onClick={(event) => {
+          if (!thread.root.anchor) {
+            return;
+          }
+          event.preventDefault();
+          scrollToAnchor(thread.root.anchor);
+        }}
+      >
+        {thread.root.detached ? <Badge tone="amber">detached</Badge> : null}
+        <span className="truncate">{thread.root.anchorLabel}</span>
+      </a>
+      <p className="mt-2 text-sm leading-6">{thread.root.message}</p>
+      {thread.replies.length > 0 ? (
+        <div className="mt-3 space-y-2 border-l pl-3">
+          {thread.replies.map((item) => (
+            <div key={item.id} className="text-sm">
+              <div className="text-xs text-muted-foreground">
+                {item.authorName ?? item.authorEmail ?? "Agent"} ·{" "}
+                <RelativeTime value={item.createdAt} />
+              </div>
+              <p>{item.message}</p>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {openReply ? (
+        <div className="mt-3 space-y-2">
+          <textarea
+            aria-label="Reply in thread"
+            className="min-h-16 w-full resize-y rounded-md border bg-card p-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            placeholder="Reply in thread"
+            value={reply}
+            onChange={(event) => onReply(event.target.value)}
+          />
+          <Button disabled={pendingReply} size="sm" onClick={onSubmitReply}>
+            Post reply
+          </Button>
+        </div>
+      ) : null}
+      <div className="mt-3 flex items-center justify-between gap-2">
+        <Button size="sm" variant="ghost" onClick={onOpenReply}>
+          Reply
+        </Button>
+        {thread.root.status === "open" ? (
+          <Button
+            aria-label="Resolve thread"
+            size="icon"
+            title="Resolve"
+            variant="ghost"
+            onClick={() => onStatus(thread.root.id, "resolved")}
+          >
+            <Check className="h-4 w-4" />
+          </Button>
+        ) : (
+          <Button
+            aria-label="Reopen thread"
+            size="icon"
+            title="Reopen"
+            variant="ghost"
+            onClick={() => onStatus(thread.root.id, "open")}
+          >
+            <RotateCcw className="h-4 w-4" />
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Avatar({ name, agent }: { name: string; agent?: boolean }) {
+  if (agent) {
+    return (
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
+        <Bot className="h-4 w-4" />
+      </span>
+    );
+  }
+  return (
+    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-semibold text-blue-700">
+      {initials(name)}
+    </span>
+  );
+}
+
+function anchorLabel(anchor: ReviewAnchor | null) {
+  if (!anchor) {
+    return "review-level";
+  }
+  if (anchor.kind === "line" && anchor.line) {
+    return `${anchor.filePath ?? anchor.blockId} · ${anchor.line.side}:${anchor.line.start}`;
+  }
+  if (anchor.kind === "question" && anchor.questionId) {
+    return `question ${anchor.questionId}`;
+  }
+  if (anchor.kind === "file" && anchor.filePath) {
+    return anchor.filePath;
+  }
+  if (anchor.textQuote?.quote) {
+    return `"${anchor.textQuote.quote.slice(0, 80)}"`;
+  }
+  return anchor.blockId;
+}
+
+function anchorTargetId(anchor: ReviewAnchor | null) {
+  if (!anchor) {
+    return undefined;
+  }
+  if (anchor.kind === "line" && anchor.line) {
+    return lineTargetId(anchor.blockId, anchor.line.side, anchor.line.start);
+  }
+  return anchor.blockId;
+}
+
+function lineTargetId(
+  blockId: string,
+  side: "before" | "after",
+  line?: number,
+) {
+  return line ? `${blockId}-${side}-${line}` : undefined;
+}
+
+function initials(value: string) {
+  return value
+    .split(/[\s@._-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("");
+}
+
+function scrollToThread(threadId?: string) {
+  if (!threadId) {
+    return;
+  }
+  scrollToElement(`thread-${threadId}`, "center");
+}
+
+function scrollToAnchor(anchor: ReviewAnchor) {
+  activateBlockTab(anchor.blockId);
+  window.setTimeout(() => {
+    const target = findTextAnchorTarget(anchor);
+    if (target) {
+      target.scrollIntoView({ block: "center", behavior: "smooth" });
+      flashDomElement(target);
+      return;
+    }
+    scrollToElement(anchorTargetId(anchor));
+  }, 0);
+}
+
+function flashAnchor(anchor: ReviewAnchor | null) {
+  if (!anchor) {
+    return;
+  }
+  const target = findTextAnchorTarget(anchor);
+  if (target) {
+    flashDomElement(target);
+    return;
+  }
+  flashElement(anchorTargetId(anchor));
+}
+
+function findTextAnchorTarget(anchor: ReviewAnchor | null) {
+  const quote = anchor?.textQuote?.quote;
+  if (!anchor || !quote) {
+    return null;
+  }
+  const block = document.getElementById(anchor.blockId);
+  if (!block) {
+    return null;
+  }
+  const normalizedQuote = normalizeComparableText(quote);
+  const candidates = Array.from(
+    block.querySelectorAll<HTMLElement>(
+      "[data-text-anchorable], p, li, td, th, span, h1, h2, h3, h4, h5, h6",
+    ),
+  );
+  return (
+    candidates.find((candidate) =>
+      normalizeComparableText(candidate.textContent ?? "").includes(
+        normalizedQuote,
+      ),
+    ) ?? null
+  );
+}
+
+function scrollToElement(id?: string, block: ScrollLogicalPosition = "start") {
+  if (!id) {
+    return;
+  }
+  const element = document.getElementById(id);
+  element?.scrollIntoView({ block, behavior: "smooth" });
+  flashElement(id);
+}
+
+function flashElement(id?: string) {
+  if (!id) {
+    return;
+  }
+  window.setTimeout(() => {
+    const element = document.getElementById(id);
+    if (element) {
+      flashDomElement(element);
+    }
+  }, 0);
+}
+
+function flashDomElement(element: Element) {
+  element.classList.add("flash-highlight");
+  window.setTimeout(() => element.classList.remove("flash-highlight"), 2000);
+}
+
+function hash(value: string) {
+  let output = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    output = (output << 5) - output + value.charCodeAt(index);
+    output |= 0;
+  }
+  return Math.abs(output).toString(36);
+}
+
+function stableJson(value: unknown) {
+  return JSON.stringify(value);
+}
+
+function activateBlockTab(blockId?: string) {
+  if (!blockId) {
+    return;
+  }
+  window.dispatchEvent(
+    new CustomEvent("sieve:activate-block", { detail: { blockId } }),
+  );
+}
+
+function normalizeComparableText(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}

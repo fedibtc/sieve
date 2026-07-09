@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "blockId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "block",
+        "text",
+        "line",
+        "file",
+        "question"
+      ]
+    },
+    "textQuote": {
+      "type": "object",
+      "properties": {
+        "quote": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contextBefore": {
+          "type": "string"
+        },
+        "contextAfter": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "quote"
+      ],
+      "additionalProperties": false
+    },
+    "line": {
+      "type": "object",
+      "properties": {
+        "side": {
+          "type": "string",
+          "enum": [
+            "before",
+            "after"
+          ]
+        },
+        "start": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "end": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "side",
+        "start"
+      ],
+      "additionalProperties": false
+    },
+    "filePath": {
+      "type": "string"
+    },
+    "questionId": {
+      "type": "string"
+    },
+    "answer": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "blockId",
+    "kind"
+  ],
+  "additionalProperties": false
+}

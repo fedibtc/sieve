@@ -1,0 +1,24 @@
+{
+  "expect": "invalid",
+  "document": {
+    "version": 1,
+    "blocks": [
+      {
+        "id": "code",
+        "type": "annotated-code",
+        "data": {
+          "filename": "src/lib.rs",
+          "code": "one\ntwo",
+          "startLine": 10,
+          "annotations": [
+            {
+              "side": "after",
+              "lines": "12",
+              "note": "No line 12"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

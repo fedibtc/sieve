@@ -1,0 +1,22 @@
+{
+  "expect": "invalid",
+  "document": {
+    "version": 1,
+    "blocks": [
+      {
+        "id": "same",
+        "type": "rich-text",
+        "data": {
+          "markdown": "One"
+        }
+      },
+      {
+        "id": "same",
+        "type": "rich-text",
+        "data": {
+          "markdown": "Two"
+        }
+      }
+    ]
+  }
+}

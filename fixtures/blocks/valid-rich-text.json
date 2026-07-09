@@ -1,0 +1,15 @@
+{
+  "expect": "valid",
+  "document": {
+    "version": 1,
+    "blocks": [
+      {
+        "id": "summary",
+        "type": "rich-text",
+        "data": {
+          "markdown": "## Outcome\nA concise valid review document."
+        }
+      }
+    ]
+  }
+}

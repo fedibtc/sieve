@@ -1,0 +1,16 @@
+{
+  "expect": "valid",
+  "document": {
+    "version": 1,
+    "blocks": [
+      {
+        "id": "compat-risk",
+        "type": "callout",
+        "data": {
+          "tone": "risk",
+          "markdown": "**Risk:** this changes the persisted credential payload shape."
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,143 @@
+name: Release
+
+on:
+  pull_request:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    uses: ./.github/workflows/release-preflight.yml
+
+  plan:
+    needs: preflight
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install dist
+        shell: bash
+        run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh
+
+      - name: Check release plan
+        if: github.event_name == 'pull_request'
+        run: dist plan
+
+      - name: Check tagged release plan
+        if: github.event_name == 'push'
+        run: dist plan --tag "$GITHUB_REF_NAME"
+
+      - name: Create draft release
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists; reusing it."
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --draft \
+              --generate-notes \
+              --target "$GITHUB_SHA" \
+              --title "Sieve ${GITHUB_REF_NAME#v}"
+          fi
+
+  build:
+    if: github.event_name == 'push'
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-14
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install dist
+        shell: bash
+        run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh
+
+      - name: Build release archive
+        run: dist build --tag "$GITHUB_REF_NAME" --artifacts=local --target "${{ matrix.target }}"
+
+      - name: Smoke test binary
+        shell: bash
+        run: |
+          archive="target/distrib/sieve-${{ matrix.target }}.tar.gz"
+          mkdir target/distrib/smoke
+          tar -xzf "$archive" -C target/distrib/smoke
+          "target/distrib/smoke/sieve-${{ matrix.target }}/sieve" --version
+
+      - name: Upload release assets
+        run: |
+          gh release upload "$GITHUB_REF_NAME" \
+            "target/distrib/sieve-${{ matrix.target }}.tar.gz" \
+            "target/distrib/sieve-${{ matrix.target }}.tar.gz.sha256" \
+            --clobber
+
+  publish:
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install dist
+        shell: bash
+        run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh
+
+      - name: Build source archive
+        run: dist build --tag "$GITHUB_REF_NAME" --artifacts=global
+
+      - name: Assemble unified checksums
+        shell: bash
+        run: |
+          mkdir target/distrib/checksums
+          gh release download "$GITHUB_REF_NAME" \
+            --pattern "sieve-*.tar.gz.sha256" \
+            --dir target/distrib/checksums
+          cat target/distrib/checksums/*.sha256 \
+            target/distrib/source.tar.gz.sha256 \
+            | sort > target/distrib/sha256.sum
+
+      - name: Upload global assets
+        run: |
+          gh release upload "$GITHUB_REF_NAME" \
+            target/distrib/source.tar.gz \
+            target/distrib/source.tar.gz.sha256 \
+            target/distrib/sha256.sum \
+            --clobber
+
+      - name: Publish release
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false --latest
