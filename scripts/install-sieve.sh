@@ -13,7 +13,7 @@ Install Sieve from a private GitHub release.
 Usage: install-sieve.sh [--version TAG] [--install-dir DIRECTORY]
 
 Options:
-  --version TAG           Install a specific release tag (for example v0.1.0).
+  --version TAG           Install a specific release tag (for example v0.2.0).
   --install-dir DIRECTORY Install into DIRECTORY instead of ~/.local/bin.
   -h, --help              Show this help.
 

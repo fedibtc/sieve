@@ -15,7 +15,7 @@ sh "$installer"
 rm -f "$installer"
 ```
 
-The installer detects macOS/Linux and the current CPU architecture, verifies the release checksum, and installs to `~/.local/bin`. Use `--version v0.1.0` to pin a release or `--install-dir /path/to/bin` to change the destination.
+The installer detects macOS/Linux and the current CPU architecture, verifies the release checksum, and installs to `~/.local/bin`. Use `--version v0.2.0` to pin a release or `--install-dir /path/to/bin` to change the destination.
 
 ## Org Dev Quickstart
 
