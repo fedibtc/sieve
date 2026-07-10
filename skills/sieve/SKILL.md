@@ -94,7 +94,7 @@ Keep the title at 70 characters or less. Use this canonical shape unless the dif
 2. For UI-facing changes, put the `image-diff` blocks from `visual-diff-to-blocks.mjs` immediately after the outcome. They are the visual headline, not supporting evidence buried below code.
 3. Contract blocks for important domain surfaces (`data-model`, `api-endpoint`, `annotated-code`, or `mermaid`) before raw diffs when they explain the change better.
 4. `file-tree` block for the changed-file footprint.
-5. `## Key changes` only when there is more than one load-bearing code surface, followed by focused `diff` / `annotated-code` blocks. Normally include 1-5 total; do not add blocks to meet a minimum.
+5. A `section` block with `data.title: "Key changes"` when there is more than one load-bearing code surface, followed immediately by focused `diff` / `annotated-code` blocks. Normally include 1-5 total; do not add blocks to meet a minimum. The explicit section groups those blocks into tabs; legacy `## Key changes` rich text remains readable but should not be authored for new reviews.
 6. Optional `question-form` only for real open questions. Do not ask the reviewer what validation ran; report your own validation results in the summary.
 
 Never silently truncate a block. The `file-tree` is the complete footprint; do not add an omitted-files prose block that repeats it. Exclude lockfiles, generated assets, minified files, binaries, build output, and routine dependency manifests from key evidence unless that file is itself review-critical.
@@ -136,7 +136,8 @@ Use these generic mapping rules outside credential-app:
 
 - Schema or migration changes go in `data-model`. Mark each entity or field with `change: "added" | "modified" | "removed"` and use `was` for changed types or shapes. Use a literal SQL/code `diff` only when the exact statement is itself important.
 - API, route, action, worker message, or protocol changes go in `api-endpoint`. Mark changed params with `change` and `was`; mark removed endpoints as removed in the endpoint `change`. Every request and response example must be one valid JSON value: no comments, no trailing commas, and no concatenated objects.
-- Every `diff` defaults to `mode: "split"` and needs a one-line `summary`; never leave a diff unlabeled. Put annotations on the after-side line numbers by default, using before-side only for pure removals.
+- Every `diff` defaults to `mode: "split"` and needs a one-line `summary`; never leave a diff unlabeled. Put annotations on the after-side line numbers by default, using before-side only for pure removals. Large diffs require focused annotations so reviewers can navigate directly to the important lines.
+- A `diff-ref` that expands beyond the CLI evidence limit is an authoring error, not permission to truncate. Replace it with a verified, focused literal `diff` that contains exact text from the real before/after blobs.
 - Brand-new files or large added blocks with no meaningful before-side belong in `annotated-code`, not a one-sided split diff.
 - Summaries describe intent and review value, not file status. Write "Makes the tabs root the page landmark", not "modified HolderMode.tsx"; write "Runs Axe over three holder states", not "added app-accessibility.spec.ts".
 - Architecture or data-flow shifts belong in `mermaid` with a genuinely two-dimensional layout. Do not reduce structural changes to a left-to-right chain when a swimlane, layered graph, or before/after shape would be clearer.

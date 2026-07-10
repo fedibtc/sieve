@@ -34,7 +34,6 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { RelativeTime } from "@/components/relative-time";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
-import { formatAbsoluteTime } from "@/lib/time";
 import type { ReviewAnchor } from "@/shared/anchors";
 import type { ReviewBlock, ReviewDocument } from "@/shared/blocks";
 import { Button } from "../ui/button";
@@ -549,12 +548,7 @@ function BlocksList({
   while (index < blocks.length) {
     const block = blocks[index];
     const next = blocks[index + 1];
-    if (
-      block?.type === "rich-text" &&
-      block.data.markdown.trim() === "## Key changes" &&
-      next &&
-      isTabbedKeyChangeBlock(next)
-    ) {
+    if (isKeyChangesSection(block) && next && isTabbedKeyChangeBlock(next)) {
       const tabBlocks: Array<
         Extract<ReviewBlock, { type: "diff" | "annotated-code" }>
       > = [];
@@ -613,6 +607,15 @@ function BlocksList({
   }
 
   return items;
+}
+
+function isKeyChangesSection(block: ReviewBlock | undefined) {
+  return (
+    (block?.type === "section" &&
+      block.data.title.trim().toLowerCase() === "key changes") ||
+    (block?.type === "rich-text" &&
+      block.data.markdown.trim().toLowerCase() === "## key changes")
+  );
 }
 
 function isTabbedKeyChangeBlock(
@@ -818,6 +821,16 @@ function BlockRenderer({
             {block.data.markdown}
           </ReactMarkdown>
         </div>
+      );
+    case "section":
+      return (
+        <h2
+          className="text-xl font-semibold"
+          data-block-id={block.id}
+          data-text-anchorable="true"
+        >
+          {block.data.title}
+        </h2>
       );
     case "callout":
       return <CalloutBlock block={block} />;
@@ -3064,10 +3077,7 @@ function ThreadCard({
           <Avatar name={author} agent={thread.root.createdBy === "agent"} />
           <div className="min-w-0">
             <div className="truncate text-sm font-medium">{author}</div>
-            <div
-              className="text-xs text-muted-foreground"
-              title={formatAbsoluteTime(thread.root.createdAt)}
-            >
+            <div className="text-xs text-muted-foreground">
               <RelativeTime value={thread.root.createdAt} />
             </div>
           </div>

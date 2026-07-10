@@ -2,6 +2,17 @@ const relativeTime = new Intl.RelativeTimeFormat(undefined, {
   numeric: "auto",
 });
 
+const absoluteTime = new Intl.DateTimeFormat("en-GB", {
+  day: "2-digit",
+  month: "short",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+  timeZone: "UTC",
+  timeZoneName: "short",
+});
+
 const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [
   ["year", 365 * 24 * 60 * 60],
   ["month", 30 * 24 * 60 * 60],
@@ -31,8 +42,20 @@ export function formatAbsoluteTime(value: string | Date | null | undefined) {
   if (!value) {
     return "Never";
   }
-  return new Intl.DateTimeFormat(undefined, {
+  return absoluteTime.format(value instanceof Date ? value : new Date(value));
+}
+
+export function formatLocalAbsoluteTime(
+  value: string | Date | null | undefined,
+  locale?: Intl.LocalesArgument,
+  timeZone?: string,
+) {
+  if (!value) {
+    return "Never";
+  }
+  return new Intl.DateTimeFormat(locale, {
     dateStyle: "medium",
     timeStyle: "short",
+    timeZone,
   }).format(value instanceof Date ? value : new Date(value));
 }

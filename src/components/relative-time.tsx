@@ -1,7 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { formatAbsoluteTime, formatRelativeTime } from "@/lib/time";
+import {
+  formatAbsoluteTime,
+  formatLocalAbsoluteTime,
+  formatRelativeTime,
+} from "@/lib/time";
 
 export function RelativeTime({
   prefix,
@@ -17,10 +21,16 @@ export function RelativeTime({
   }, []);
 
   const label = mounted ? formatRelativeTime(value) : formatAbsoluteTime(value);
+  const title = mounted
+    ? formatLocalAbsoluteTime(value)
+    : formatAbsoluteTime(value);
+  const dateTime = value
+    ? (value instanceof Date ? value : new Date(value)).toISOString()
+    : undefined;
 
   return (
-    <span title={formatAbsoluteTime(value)}>
+    <time dateTime={dateTime} title={title}>
       {prefix ? `${prefix} ${label}` : label}
-    </span>
+    </time>
   );
 }

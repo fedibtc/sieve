@@ -18,6 +18,7 @@ const DEFAULT_HOST: &str = "http://localhost:3000";
 const MAX_ATTACHMENT_BYTES: u64 = 2_000_000;
 const MAX_KEY_DIFFS: usize = 5;
 const MAX_DIFF_LINES: usize = 150;
+const LARGE_DIFF_LINES: usize = 100;
 const MAX_BLOCKS: usize = 120;
 const MAX_DOC_BYTES: usize = 2_000_000;
 const BLOCK_SCHEMA: &str = include_str!("../../schemas/block.schema.json");
@@ -479,9 +480,17 @@ fn scaffold(args: ScaffoldArgs) -> Result<Value> {
         json!({
             "id": "files",
             "type": "file-tree",
+            "summary": "Changed files",
             "data": { "entries": files.iter().map(file_tree_entry).collect::<Vec<_>>() }
         }),
     ];
+    if key_files.len() > 1 {
+        blocks.push(json!({
+            "id": "key-changes",
+            "type": "section",
+            "data": { "title": "Key changes" }
+        }));
+    }
     for (index, file) in key_files.iter().enumerate() {
         if file.change == "added" && file.additions > 0 {
             blocks.push(json!({
@@ -1499,22 +1508,21 @@ fn expanded_hunk_diff(
     let first = hunks
         .first()
         .ok_or_else(|| anyhow!("diff-ref `{path}` did not produce hunks"))?;
+    let expanded_line_count =
+        hunks.iter().map(|hunk| hunk.lines.len()).sum::<usize>() + hunks.len().saturating_sub(1);
+    if expanded_line_count > MAX_DIFF_LINES {
+        bail!(
+            "diff-ref `{path}` expands to {expanded_line_count} lines; replace it with a focused literal diff under {MAX_DIFF_LINES} lines"
+        );
+    }
     let mut before = Vec::new();
     let mut after = Vec::new();
-    let mut line_count = 0;
     for hunk in &hunks {
-        if line_count >= MAX_DIFF_LINES {
-            break;
-        }
         if !before.is_empty() || !after.is_empty() {
             before.push("...".to_string());
             after.push("...".to_string());
-            line_count += 1;
         }
         for line in &hunk.lines {
-            if line_count >= MAX_DIFF_LINES {
-                break;
-            }
             match line {
                 HunkLine::Remove(text) => before.push(text.clone()),
                 HunkLine::Add(text) => after.push(text.clone()),
@@ -1523,7 +1531,6 @@ fn expanded_hunk_diff(
                     after.push(text.clone());
                 }
             }
-            line_count += 1;
         }
     }
     Ok(ExpandedDiff {
@@ -1648,6 +1655,30 @@ fn validate_reviewer_focus(manifest: &Value) -> Result<()> {
     else {
         return Ok(());
     };
+    for (index, block) in blocks.iter().enumerate() {
+        if !is_key_evidence_block(block)
+            || index
+                .checked_sub(1)
+                .and_then(|previous| blocks.get(previous))
+                .is_some_and(is_key_evidence_block)
+        {
+            continue;
+        }
+        let run_length = blocks[index..]
+            .iter()
+            .take_while(|candidate| is_key_evidence_block(candidate))
+            .count();
+        if run_length > 1
+            && !index
+                .checked_sub(1)
+                .and_then(|previous| blocks.get(previous))
+                .is_some_and(is_key_changes_section)
+        {
+            bail!(
+                "{run_length} consecutive key code evidence blocks need an explicit `Key changes` section"
+            );
+        }
+    }
     for block in blocks {
         let id = block.get("id").and_then(Value::as_str).unwrap_or("unknown");
         let block_type = block.get("type").and_then(Value::as_str).unwrap_or("");
@@ -1705,6 +1736,27 @@ fn validate_reviewer_focus(manifest: &Value) -> Result<()> {
     Ok(())
 }
 
+fn is_key_evidence_block(block: &Value) -> bool {
+    matches!(
+        block.get("type").and_then(Value::as_str),
+        Some("diff" | "annotated-code" | "diff-ref" | "annotated-code-ref")
+    )
+}
+
+fn is_key_changes_section(block: &Value) -> bool {
+    match block.get("type").and_then(Value::as_str) {
+        Some("section") => block
+            .pointer("/data/title")
+            .and_then(Value::as_str)
+            .is_some_and(|title| title.trim().eq_ignore_ascii_case("key changes")),
+        Some("rich-text") => block
+            .pointer("/data/markdown")
+            .and_then(Value::as_str)
+            .is_some_and(|markdown| markdown.trim().eq_ignore_ascii_case("## key changes")),
+        _ => false,
+    }
+}
+
 fn is_placeholder_review_summary(summary: &str, filename: &str) -> bool {
     let lower = summary.trim().to_ascii_lowercase();
     if lower == "key change" || lower.starts_with("replace with ") {
@@ -1724,6 +1776,29 @@ fn review_quality_warnings(manifest: &Value) -> Vec<String> {
     };
     let mut warnings = Vec::new();
     for block in blocks {
+        if block.get("type").and_then(Value::as_str) == Some("diff") {
+            let id = block.get("id").and_then(Value::as_str).unwrap_or("unknown");
+            let before_lines = block
+                .pointer("/data/before")
+                .and_then(Value::as_str)
+                .map(|text| text.lines().count())
+                .unwrap_or(0);
+            let after_lines = block
+                .pointer("/data/after")
+                .and_then(Value::as_str)
+                .map(|text| text.lines().count())
+                .unwrap_or(0);
+            let annotations = block
+                .pointer("/data/annotations")
+                .and_then(Value::as_array)
+                .map(Vec::len)
+                .unwrap_or(0);
+            if before_lines.max(after_lines) >= LARGE_DIFF_LINES && annotations == 0 {
+                warnings.push(format!(
+                    "large diff block `{id}` needs focused annotations for reviewer navigation"
+                ));
+            }
+        }
         if block.get("type").and_then(Value::as_str) != Some("rich-text") {
             continue;
         }
@@ -2856,6 +2931,7 @@ mod tests {
             "valid-callout.json",
             "valid-image-diff.json",
             "valid-rich-text.json",
+            "valid-section.json",
         ] {
             let fixture = read_block_fixture(name);
             let expected = fixture
@@ -2891,6 +2967,18 @@ mod tests {
             .pointer("/content/blocks")
             .and_then(Value::as_array)
             .unwrap();
+        assert!(blocks.iter().any(|block| {
+            block.get("type").and_then(Value::as_str) == Some("section")
+                && block.pointer("/data/title").and_then(Value::as_str) == Some("Key changes")
+        }));
+        assert_eq!(
+            blocks
+                .iter()
+                .find(|block| block.get("type").and_then(Value::as_str) == Some("file-tree"))
+                .and_then(|block| block.get("summary"))
+                .and_then(Value::as_str),
+            Some("Changed files")
+        );
         let diff_refs = blocks
             .iter()
             .filter(|block| block.get("type").and_then(Value::as_str) == Some("diff-ref"))
@@ -2977,6 +3065,19 @@ mod tests {
         .to_string();
         assert!(error.contains("focused annotated-code excerpt"));
 
+        let error = expand_diff_ref(json!({
+            "id": "large-diff",
+            "type": "diff-ref",
+            "path": "large-new-file.ts",
+            "base": "master",
+            "head": "HEAD",
+            "summary": "Explains the large added surface",
+            "annotations": []
+        }))
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("focused literal diff"));
+
         env::set_current_dir(previous_dir).unwrap();
     }
 
@@ -3023,6 +3124,36 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("describe what changed and why"));
+
+        let ungrouped = json!({
+            "content": { "blocks": [
+                {
+                    "id": "one",
+                    "type": "diff",
+                    "summary": "Changes the first behavior",
+                    "data": { "filename": "one.ts", "before": "old", "after": "new" }
+                },
+                {
+                    "id": "two",
+                    "type": "annotated-code",
+                    "summary": "Introduces the second behavior",
+                    "data": { "filename": "two.ts", "code": "export const two = true;" }
+                }
+            ] }
+        });
+        assert!(validate_reviewer_focus(&ungrouped)
+            .unwrap_err()
+            .to_string()
+            .contains("explicit `Key changes` section"));
+
+        let grouped = json!({
+            "content": { "blocks": [
+                { "id": "key-changes", "type": "section", "data": { "title": "Key changes" } },
+                ungrouped.pointer("/content/blocks/0").unwrap(),
+                ungrouped.pointer("/content/blocks/1").unwrap()
+            ] }
+        });
+        validate_reviewer_focus(&grouped).unwrap();
     }
 
     #[test]
@@ -3038,6 +3169,27 @@ mod tests {
         });
         let warnings = review_quality_warnings(&manifest);
         assert_eq!(warnings.len(), 3);
+    }
+
+    #[test]
+    fn warns_about_large_unannotated_diffs() {
+        let manifest = json!({
+            "content": { "blocks": [{
+                "id": "large-diff",
+                "type": "diff",
+                "summary": "Changes a large policy surface",
+                "data": {
+                    "filename": "policy.ts",
+                    "before": "before",
+                    "after": (0..LARGE_DIFF_LINES).map(|index| format!("line {index}")).collect::<Vec<_>>().join("\n"),
+                    "annotations": []
+                }
+            }] }
+        });
+        assert_eq!(
+            review_quality_warnings(&manifest),
+            vec!["large diff block `large-diff` needs focused annotations for reviewer navigation"]
+        );
     }
 
     fn read_block_fixture(name: &str) -> Value {

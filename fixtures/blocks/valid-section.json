@@ -1,0 +1,15 @@
+{
+  "expect": "valid",
+  "document": {
+    "version": 1,
+    "blocks": [
+      {
+        "id": "key-changes",
+        "type": "section",
+        "data": {
+          "title": "Key changes"
+        }
+      }
+    ]
+  }
+}

@@ -17,6 +17,15 @@ const richTextBlockSchema = z.object({
   }),
 });
 
+const sectionBlockSchema = z.object({
+  id: z.string().min(1),
+  type: z.literal("section"),
+  summary: z.string().optional(),
+  data: z.object({
+    title: z.string().trim().min(1).max(80),
+  }),
+});
+
 const calloutBlockSchema = z.object({
   id: z.string().min(1),
   type: z.literal("callout"),
@@ -224,6 +233,7 @@ const imageDiffBlockSchema = z
 
 export const blockSchema = z.discriminatedUnion("type", [
   richTextBlockSchema,
+  sectionBlockSchema,
   calloutBlockSchema,
   fileTreeBlockSchema,
   diffBlockSchema,

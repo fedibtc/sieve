@@ -22,6 +22,9 @@ test("key changes group renders as tabs and thread anchors activate hidden tabs"
 
   await page.goto(`/reviews/${published.review.id}`);
   await expect(
+    page.getByRole("heading", { level: 2, name: "Key changes" }),
+  ).toBeVisible();
+  await expect(
     page.getByRole("button", { name: /src\/one\.ts|First file/ }),
   ).toBeVisible();
   await page.getByRole("button", { name: /src\/two\.ts|Second file/ }).click();

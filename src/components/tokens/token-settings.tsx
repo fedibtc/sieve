@@ -6,7 +6,6 @@ import { useMemo, useRef, useState } from "react";
 import { RelativeTime } from "@/components/relative-time";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { formatAbsoluteTime } from "@/lib/time";
 
 type TokenSummary = {
   id: string;
@@ -167,16 +166,10 @@ export function TokenSettings({
                       {token.prefix ?? "sieve_"}
                       {token.start ?? ""}
                     </td>
-                    <td
-                      className="px-4 py-3 text-muted-foreground"
-                      title={formatAbsoluteTime(token.lastRequest)}
-                    >
+                    <td className="px-4 py-3 text-muted-foreground">
                       <RelativeTime value={token.lastRequest} />
                     </td>
-                    <td
-                      className="px-4 py-3 text-muted-foreground"
-                      title={formatAbsoluteTime(token.expiresAt)}
-                    >
+                    <td className="px-4 py-3 text-muted-foreground">
                       <RelativeTime value={token.expiresAt} />
                     </td>
                     <td className="px-4 py-3">

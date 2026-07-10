@@ -2,7 +2,6 @@ import { ExternalLink, MessageSquare } from "lucide-react";
 import Link from "next/link";
 import { RelativeTime } from "@/components/relative-time";
 import { Badge } from "@/components/ui/badge";
-import { formatAbsoluteTime } from "@/lib/time";
 import { requireSession } from "@/server/auth-middleware";
 import { listReviews } from "@/server/services/reviews";
 import { ensureUser } from "@/server/services/users";
@@ -101,10 +100,7 @@ export default async function ReviewsPage({
                     <span className="text-sm text-muted-foreground">-</span>
                   )}
                 </span>
-                <span
-                  className="text-sm text-muted-foreground"
-                  title={formatAbsoluteTime(review.updatedAt)}
-                >
+                <span className="text-sm text-muted-foreground">
                   <RelativeTime value={review.updatedAt} />
                 </span>
               </Link>

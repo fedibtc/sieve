@@ -285,9 +285,8 @@ export function keyChangesGroup(): ReviewBlock[] {
     },
     {
       id: "key-changes",
-      type: "rich-text",
-      summary: "Key changes",
-      data: { markdown: "## Key changes" },
+      type: "section",
+      data: { title: "Key changes" },
     },
     {
       id: "key-diff-one",

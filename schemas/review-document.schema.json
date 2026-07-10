@@ -56,6 +56,42 @@
               },
               "type": {
                 "type": "string",
+                "const": "section"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "data": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  }
+                },
+                "required": [
+                  "title"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "type",
+              "data"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "type": {
+                "type": "string",
                 "const": "callout"
               },
               "summary": {
