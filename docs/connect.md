@@ -44,7 +44,7 @@ sieve publish --manifest recap.json
 sieve feedback <reviewId>
 ```
 
-If the branch has UI changes, generate visual blocks with the skill's `visual-diff-to-blocks.mjs` helper and splice the returned `image-diff` blocks into `recap.json` before publishing.
+Run `sieve policy show` before authoring. If the branch has UI changes, capture deterministic before and after PNG directories using the project policy or repository's existing harness, run `sieve visual-diff --before <dir> --after <dir>`, and splice the returned `image-diff` blocks into `recap.json` before publishing.
 
 ## Integration Check
 

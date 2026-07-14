@@ -15,7 +15,7 @@ sh "$installer"
 rm -f "$installer"
 ```
 
-The installer detects macOS/Linux and the current CPU architecture, verifies the release checksum, and installs to `~/.local/bin`. Use `--version v0.2.0` to pin a release or `--install-dir /path/to/bin` to change the destination.
+The installer detects macOS/Linux and the current CPU architecture, verifies the release checksum, and installs to `~/.local/bin`. Use `--version v0.3.0` to pin a release or `--install-dir /path/to/bin` to change the destination.
 
 ## Org Dev Quickstart
 
@@ -90,15 +90,15 @@ sieve publish --manifest recap.json --dry-run
 sieve publish --manifest recap.json
 ```
 
-Before publishing, prune the draft to the recap contract in `skills/sieve/SKILL.md` and include the validation commands you actually ran.
+Before publishing, run `sieve policy show`, prune the draft to the effective review policy, and include the validation commands you actually ran.
 
-For UI-facing credential-app branches, generate visual diff blocks. Localhost can use the dev auth bypass; non-local hosts need `SIEVE_TOKEN`:
+For UI-facing changes, capture deterministic before and after PNGs using the project policy or repository's own harness, then generate ready-to-splice visual blocks:
 
 ```bash
-node ~/.codex/skills/sieve/scripts/visual-diff-to-blocks.mjs --base master --head HEAD
+sieve visual-diff --before before/ --after after/ --baseline-ref merge-base@abc123
 ```
 
-The script captures showcase screenshots on the merge-base and branch, compares them with pinned `reg-cli@0.18.16`, uploads PNG attachments to Sieve, and prints `image-diff` blocks that can be spliced into the review content.
+Sieve owns comparison, diff overlays, uploads, and block emission; each project owns how its screenshots are captured. Run `sieve policy init` to commit repository-specific validation and visual-capture requirements.
 
 ## Known Simplifications
 
@@ -111,18 +111,18 @@ The `/api/mcp` route remains available for old sessions during migration, but it
 GitHub Actions builds and publishes release binaries. Maintainers do not build or upload them locally.
 
 1. Update `version` in `cli/Cargo.toml` and commit the change after CI passes.
-2. Check the release plan with `nix develop --command nix run nixpkgs#cargo-dist -- plan --tag v0.2.0`.
+2. Check the release plan with `nix develop --command nix run nixpkgs#cargo-dist -- plan --tag v0.3.0`.
 3. Create and push the matching tag:
 
 ```bash
-git tag -s v0.2.0
-git push origin v0.2.0
+git tag -s v0.3.0
+git push origin v0.3.0
 ```
 
 `.github/workflows/release.yml` uses cargo-dist for native builds but uploads directly to a draft GitHub release because the organization does not currently have Actions artifact-storage capacity. Validate release configuration changes with:
 
 ```bash
-nix develop --command nix run nixpkgs#cargo-dist -- plan --tag v0.2.0
+nix develop --command nix run nixpkgs#cargo-dist -- plan --tag v0.3.0
 ```
 
 The release workflow runs the reusable preflight checks, builds each configured OS/architecture target, creates checksums, and publishes the draft GitHub release only when every required job succeeds.

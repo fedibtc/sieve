@@ -1,6 +1,7 @@
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, Duration, Utc};
 use clap::{error::ErrorKind, Args, Parser, Subcommand, ValueEnum};
+use globset::{Glob, GlobSetBuilder};
 use is_terminal::IsTerminal;
 use reqwest::blocking::{Client, RequestBuilder};
 use serde::{Deserialize, Serialize};
@@ -13,6 +14,9 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
+
+mod policy;
+mod visual;
 
 const DEFAULT_HOST: &str = "http://localhost:3000";
 const MAX_ATTACHMENT_BYTES: u64 = 2_000_000;
@@ -28,12 +32,16 @@ const SKILL_SIDECAR: &str = ".sieve-skill.json";
 const SKILL_FILES: &[(&str, &str)] = &[
     ("SKILL.md", include_str!("../../skills/sieve/SKILL.md")),
     (
-        "references/pr-comment.md",
-        include_str!("../../skills/sieve/references/pr-comment.md"),
+        "references/default-review-policy.md",
+        include_str!("../../skills/sieve/references/default-review-policy.md"),
     ),
     (
-        "scripts/visual-diff-to-blocks.mjs",
-        include_str!("../../skills/sieve/scripts/visual-diff-to-blocks.mjs"),
+        "references/review-policy-template.md",
+        include_str!("../../skills/sieve/references/review-policy-template.md"),
+    ),
+    (
+        "references/pr-comment.md",
+        include_str!("../../skills/sieve/references/pr-comment.md"),
     ),
 ];
 
@@ -66,8 +74,10 @@ enum Commands {
     Reopen(ReviewId),
     Session(SessionCommand),
     Attach(AttachArgs),
+    VisualDiff(visual::VisualDiffArgs),
     PrComment(ReviewId),
     Skill(SkillCommand),
+    Policy(PolicyCommand),
 }
 
 #[derive(Args)]
@@ -114,6 +124,8 @@ struct PublishArgs {
     allow_findings: Vec<String>,
     #[arg(long)]
     allow_unverified_diffs: bool,
+    #[arg(long)]
+    allow_missing_visual_evidence: Option<String>,
 }
 
 #[derive(Args)]
@@ -191,6 +203,24 @@ struct AttachArgs {
 struct SkillCommand {
     #[command(subcommand)]
     command: SkillSubcommand,
+}
+
+#[derive(Args)]
+struct PolicyCommand {
+    #[command(subcommand)]
+    command: PolicySubcommand,
+}
+
+#[derive(Subcommand)]
+enum PolicySubcommand {
+    Show,
+    Init(PolicyInitArgs),
+}
+
+#[derive(Args)]
+struct PolicyInitArgs {
+    #[arg(long)]
+    force: bool,
 }
 
 #[derive(Subcommand)]
@@ -321,6 +351,7 @@ fn run(cli: Cli, json_output: bool) -> Result<()> {
         Commands::Reopen(args) => update_status(&client, args.review_id, "open"),
         Commands::Session(args) => session(&client, args.command),
         Commands::Attach(args) => attach(&client, args),
+        Commands::VisualDiff(args) => visual::run(&client, args),
         Commands::PrComment(args) => pr_comment(&client, args.review_id),
         Commands::Skill(args) => match args.command {
             SkillSubcommand::Show(show_args) => {
@@ -328,6 +359,18 @@ fn run(cli: Cli, json_output: bool) -> Result<()> {
                 return Ok(());
             }
             command => skill(command),
+        },
+        Commands::Policy(args) => match args.command {
+            PolicySubcommand::Show => {
+                let policy = policy::discover();
+                if json_output {
+                    print_value(policy.show_json(), true);
+                } else {
+                    print!("{}", policy::show_human(&policy));
+                }
+                return Ok(());
+            }
+            PolicySubcommand::Init(args) => policy::init(args.force),
         },
     }?;
     print_value(result, json_output);
@@ -373,13 +416,16 @@ fn status(client: &ApiClient) -> Result<Value> {
     let live_schema = client.get("/api/agent/v1/block-schema").ok();
     let schema_drift = schema_drift_from_live(live_schema.as_ref());
     let skill = skill_status_for_defaults()?;
-    let warnings = status_warnings(&whoami, schema_drift, &skill);
+    let policy = policy::discover();
+    let mut warnings = status_warnings(&whoami, schema_drift, &skill);
+    warnings.extend(policy.warnings());
     Ok(json!({
         "host": client.host,
         "hasToken": client.token.is_some(),
         "whoami": whoami,
         "schemaDrift": schema_drift,
         "skill": skill,
+        "policy": policy.status_json(),
         "warnings": warnings,
     }))
 }
@@ -469,6 +515,12 @@ fn scaffold(args: ScaffoldArgs) -> Result<Value> {
         .filter(|file| !is_excluded_file(file))
         .collect::<Vec<_>>();
     let key_files = visible_files.iter().take(MAX_KEY_DIFFS).collect::<Vec<_>>();
+    let policy = policy::discover();
+    let ui_paths_matched = policy
+        .ui_paths()
+        .map(|patterns| matching_paths(files.iter().map(|file| file.path.as_str()), patterns))
+        .transpose()?
+        .unwrap_or_default();
     let mut blocks = vec![
         json!({
             "id": "summary",
@@ -484,6 +536,16 @@ fn scaffold(args: ScaffoldArgs) -> Result<Value> {
             "data": { "entries": files.iter().map(file_tree_entry).collect::<Vec<_>>() }
         }),
     ];
+    if !ui_paths_matched.is_empty() {
+        blocks.insert(1, json!({
+            "id": "visual-evidence",
+            "type": "callout",
+            "data": {
+                "tone": "warning",
+                "markdown": "Replace with the image-diff blocks from `sieve visual-diff`: this branch touches UI paths and the project policy requires visual evidence. If the change has no visible effect, delete this block and say why in the summary."
+            }
+        }));
+    }
     if key_files.len() > 1 {
         blocks.push(json!({
             "id": "key-changes",
@@ -521,11 +583,12 @@ fn scaffold(args: ScaffoldArgs) -> Result<Value> {
         "baseRef": args.base,
         "headSha": git(["rev-parse", &args.head]).ok(),
         "idempotencyKey": idempotency_key,
+        "uiPathsMatched": ui_paths_matched,
         "content": { "version": 1, "blocks": blocks }
     });
     if let Some(path) = args.output {
         fs::write(&path, serde_json::to_string_pretty(&manifest)?)?;
-        Ok(json!({ "manifest": path, "files": files.len() }))
+        Ok(json!({ "manifest": path, "files": files.len(), "uiPathsMatched": ui_paths_matched }))
     } else {
         Ok(manifest)
     }
@@ -536,10 +599,19 @@ fn publish(client: &ApiClient, args: PublishArgs) -> Result<Value> {
         .with_context(|| format!("failed to read {}", args.manifest.display()))?;
     let mut manifest: Value = serde_json::from_str(&raw)?;
     let mut warnings = schema_drift_warnings(client);
+    let policy = policy::discover();
+    warnings.extend(policy.warnings());
+    let (visual_quality_warnings, visual_warnings) = visual_evidence_warnings(
+        &manifest,
+        &policy,
+        args.allow_missing_visual_evidence.as_deref(),
+    )?;
+    warnings.extend(visual_warnings);
     warnings.extend(expand_manifest(&mut manifest, args.allow_unverified_diffs)?);
     validate_manifest_content(&manifest)?;
     validate_reviewer_focus(&manifest)?;
-    let quality_warnings = review_quality_warnings(&manifest);
+    let mut quality_warnings = review_quality_warnings(&manifest);
+    quality_warnings.extend(visual_quality_warnings);
     if !args.dry_run && !quality_warnings.is_empty() {
         bail!(
             "review quality warnings blocked publish: {}",
@@ -663,10 +735,26 @@ fn session(client: &ApiClient, command: SessionSubcommand) -> Result<Value> {
 fn attach(client: &ApiClient, args: AttachArgs) -> Result<Value> {
     let data = fs::read(&args.file)?;
     if data.len() as u64 > MAX_ATTACHMENT_BYTES {
-        bail!("PNG exceeds {MAX_ATTACHMENT_BYTES} byte limit");
+        bail!(
+            "{} exceeds {MAX_ATTACHMENT_BYTES} byte PNG limit",
+            args.file.display()
+        );
     }
+    upload_png(client, data)
+}
+
+fn upload_png(client: &ApiClient, data: Vec<u8>) -> Result<Value> {
     let (width, height) = png_dimensions(&data)?;
     let sha256 = hex::encode(Sha256::digest(&data));
+    if let Some(existing) = client.get_optional(&format!("/api/attachments/by-hash/{sha256}"))? {
+        return Ok(json!({
+            "attachmentId": existing.get("id").cloned().unwrap_or(Value::Null),
+            "width": existing.get("width").cloned().unwrap_or(json!(width)),
+            "height": existing.get("height").cloned().unwrap_or(json!(height)),
+            "sha256": sha256,
+            "deduplicated": true,
+        }));
+    }
     let uploaded = client.post_png("/api/attachments", data)?;
     Ok(json!({
         "attachmentId": uploaded.get("id").cloned().unwrap_or(Value::Null),
@@ -1084,6 +1172,21 @@ impl ApiClient {
 
     fn get(&self, path: &str) -> Result<Value> {
         self.send(self.auth(self.client.get(self.url(path))))
+    }
+
+    fn get_optional(&self, path: &str) -> Result<Option<Value>> {
+        let response = self.auth(self.client.get(self.url(path))).send()?;
+        if response.status().as_u16() == 404 {
+            return Ok(None);
+        }
+        let status = response.status();
+        let text = response.text()?;
+        let value =
+            serde_json::from_str::<Value>(&text).unwrap_or_else(|_| json!({ "body": text }));
+        if !status.is_success() {
+            bail!("server returned {}: {}", status.as_u16(), value);
+        }
+        Ok(Some(value))
     }
 
     fn delete(&self, path: &str) -> Result<Value> {
@@ -1765,6 +1868,121 @@ fn is_placeholder_review_summary(summary: &str, filename: &str) -> bool {
     ["added", "modified", "removed", "renamed"]
         .iter()
         .any(|status| lower == format!("{status} {}", filename.to_ascii_lowercase()))
+}
+
+const DEFAULT_UI_GLOBS: &[&str] = &[
+    "**/*.tsx",
+    "**/*.jsx",
+    "**/*.vue",
+    "**/*.svelte",
+    "**/*.css",
+    "**/*.scss",
+    "**/*.less",
+];
+
+fn visual_evidence_warnings(
+    manifest: &Value,
+    policy: &policy::EffectivePolicy,
+    waiver: Option<&str>,
+) -> Result<(Vec<String>, Vec<String>)> {
+    if manifest
+        .pointer("/content/blocks")
+        .and_then(Value::as_array)
+        .is_some_and(|blocks| {
+            blocks
+                .iter()
+                .any(|block| block.get("type").and_then(Value::as_str) == Some("image-diff"))
+        })
+    {
+        return Ok((vec![], vec![]));
+    }
+    let paths = manifest_review_paths(manifest);
+    let declared = policy.ui_paths();
+    if declared.is_some_and(<[String]>::is_empty) {
+        return Ok((vec![], vec![]));
+    }
+    let patterns = declared.map(|items| items.to_vec()).unwrap_or_else(|| {
+        DEFAULT_UI_GLOBS
+            .iter()
+            .map(|item| item.to_string())
+            .collect()
+    });
+    let matched = matching_paths(paths.iter().map(String::as_str), &patterns)?;
+    if matched.is_empty() {
+        return Ok((vec![], vec![]));
+    }
+    let samples = matched
+        .iter()
+        .take(5)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    if declared.is_some() {
+        let warning = format!("UI paths matched ({samples}) but the recap has no image-diff blocks; capture visual evidence per `sieve policy show`, or pass `--allow-missing-visual-evidence <reason>`");
+        if let Some(reason) = waiver {
+            if reason.trim().is_empty() {
+                bail!("--allow-missing-visual-evidence requires a non-empty reason");
+            }
+            return Ok((
+                vec![],
+                vec![format!("{warning}; waived because: {}", reason.trim())],
+            ));
+        }
+        Ok((vec![warning], vec![]))
+    } else {
+        Ok((vec![], vec![format!("Changed files match common UI paths ({samples}) and the recap has no image-diff blocks; if this change is user-visible, the default policy requires visual evidence (`sieve policy show`). Declare `ui-paths` in `.sieve/review-policy.md` to make this check blocking, or `ui-paths: []` to disable it.")]))
+    }
+}
+
+fn manifest_review_paths(manifest: &Value) -> Vec<String> {
+    let mut paths = BTreeMap::<String, ()>::new();
+    let Some(blocks) = manifest
+        .pointer("/content/blocks")
+        .and_then(Value::as_array)
+    else {
+        return vec![];
+    };
+    for block in blocks {
+        match block.get("type").and_then(Value::as_str) {
+            Some("file-tree") => {
+                if let Some(entries) = block.pointer("/data/entries").and_then(Value::as_array) {
+                    for entry in entries {
+                        if let Some(path) = entry.get("path").and_then(Value::as_str) {
+                            paths.insert(path.to_string(), ());
+                        }
+                    }
+                }
+            }
+            Some("diff") | Some("annotated-code") => {
+                if let Some(path) = block.pointer("/data/filename").and_then(Value::as_str) {
+                    paths.insert(path.to_string(), ());
+                }
+            }
+            Some("diff-ref") | Some("annotated-code-ref") => {
+                if let Some(path) = block.get("path").and_then(Value::as_str) {
+                    paths.insert(path.to_string(), ());
+                }
+            }
+            _ => {}
+        }
+    }
+    paths.into_keys().collect()
+}
+
+fn matching_paths<'a>(
+    paths: impl Iterator<Item = &'a str>,
+    patterns: &[String],
+) -> Result<Vec<String>> {
+    let mut builder = GlobSetBuilder::new();
+    for pattern in patterns {
+        builder
+            .add(Glob::new(pattern).with_context(|| format!("invalid ui-path glob `{pattern}`"))?);
+    }
+    let set = builder.build()?;
+    Ok(paths
+        .filter(|path| set.is_match(path))
+        .map(str::to_string)
+        .collect())
 }
 
 fn review_quality_warnings(manifest: &Value) -> Vec<String> {
@@ -3082,6 +3300,50 @@ mod tests {
     }
 
     #[test]
+    fn scaffold_nudges_when_declared_ui_paths_match() {
+        let _guard = CWD_LOCK.lock().unwrap();
+        let previous_dir = env::current_dir().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        setup_diff_repo(repo.path());
+        fs::create_dir_all(repo.path().join(".sieve")).unwrap();
+        fs::write(
+            repo.path().join(".sieve/review-policy.md"),
+            "---\nui-paths:\n  - src/**/*.tsx\n---\n# Review Policy\n",
+        )
+        .unwrap();
+        fs::create_dir_all(repo.path().join("src/components")).unwrap();
+        fs::write(
+            repo.path().join("src/components/Screen.tsx"),
+            "export function Screen() { return <main />; }\n",
+        )
+        .unwrap();
+        git_test(repo.path(), &["add", "src/components/Screen.tsx"]);
+        git_test(repo.path(), &["commit", "-m", "add screen"]);
+        env::set_current_dir(repo.path()).unwrap();
+
+        let manifest = scaffold(ScaffoldArgs {
+            base: "master".to_string(),
+            head: "HEAD".to_string(),
+            output: None,
+        })
+        .unwrap();
+        assert_eq!(
+            manifest
+                .pointer("/uiPathsMatched/0")
+                .and_then(Value::as_str),
+            Some("src/components/Screen.tsx")
+        );
+        assert_eq!(
+            manifest
+                .pointer("/content/blocks/1/id")
+                .and_then(Value::as_str),
+            Some("visual-evidence")
+        );
+
+        env::set_current_dir(previous_dir).unwrap();
+    }
+
+    #[test]
     fn reviewer_focus_rejects_generated_context() {
         let one_sided = json!({
             "content": { "blocks": [{
@@ -3189,6 +3451,76 @@ mod tests {
         assert_eq!(
             review_quality_warnings(&manifest),
             vec!["large diff block `large-diff` needs focused annotations for reviewer navigation"]
+        );
+    }
+
+    #[test]
+    fn visual_evidence_gate_blocks_declared_paths_and_supports_waivers() {
+        let manifest = json!({
+            "content": { "blocks": [{
+                "id": "files", "type": "file-tree", "data": { "entries": [
+                    { "path": "src/components/Screen.tsx", "change": "modified" }
+                ] }
+            }] }
+        });
+        let policy = policy::EffectivePolicy {
+            project: Some(policy::ProjectPolicy {
+                path: PathBuf::from(".sieve/review-policy.md"),
+                markdown: String::new(),
+                frontmatter: policy::PolicyFrontmatter {
+                    ui_paths: Some(vec!["src/**/*.tsx".to_string()]),
+                },
+                warnings: vec![],
+            }),
+            discovery_warnings: vec![],
+        };
+        let (quality, warnings) = visual_evidence_warnings(&manifest, &policy, None).unwrap();
+        assert_eq!(quality.len(), 1);
+        assert!(warnings.is_empty());
+        let (quality, warnings) =
+            visual_evidence_warnings(&manifest, &policy, Some("capture environment unavailable"))
+                .unwrap();
+        assert!(quality.is_empty());
+        assert!(warnings[0].contains("capture environment unavailable"));
+
+        let mut with_image = manifest.clone();
+        with_image
+            .pointer_mut("/content/blocks")
+            .unwrap()
+            .as_array_mut()
+            .unwrap()
+            .push(json!({ "id": "visual", "type": "image-diff", "data": {} }));
+        assert_eq!(
+            visual_evidence_warnings(&with_image, &policy, None).unwrap(),
+            (vec![], vec![])
+        );
+    }
+
+    #[test]
+    fn visual_evidence_heuristic_is_advisory_and_explicit_empty_disables_it() {
+        let manifest = json!({ "content": { "blocks": [{
+            "id": "code", "type": "annotated-code-ref", "path": "app/page.tsx"
+        }] } });
+        let default_policy = policy::EffectivePolicy::default();
+        let (quality, warnings) =
+            visual_evidence_warnings(&manifest, &default_policy, None).unwrap();
+        assert!(quality.is_empty());
+        assert_eq!(warnings.len(), 1);
+
+        let disabled = policy::EffectivePolicy {
+            project: Some(policy::ProjectPolicy {
+                path: PathBuf::from(".sieve/review-policy.md"),
+                markdown: String::new(),
+                frontmatter: policy::PolicyFrontmatter {
+                    ui_paths: Some(vec![]),
+                },
+                warnings: vec![],
+            }),
+            discovery_warnings: vec![],
+        };
+        assert_eq!(
+            visual_evidence_warnings(&manifest, &disabled, None).unwrap(),
+            (vec![], vec![])
         );
     }
 

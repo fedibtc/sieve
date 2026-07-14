@@ -309,6 +309,59 @@ fn full_agent_loop_against_test_server() {
     assert_eq!(attachment.get("width").and_then(Value::as_u64), Some(1));
     assert_eq!(attachment.get("height").and_then(Value::as_u64), Some(1));
 
+    let before_dir = config_dir.path().join("visual-before");
+    let after_dir = config_dir.path().join("visual-after");
+    fs::create_dir_all(&before_dir).unwrap();
+    fs::create_dir_all(&after_dir).unwrap();
+    write_rgba_png(&before_dir.join("settings.png"), [0, 0, 0, 255]);
+    write_rgba_png(&after_dir.join("settings.png"), [255, 255, 255, 255]);
+    let visual = json_command(
+        command()
+            .args([
+                "--host",
+                &server,
+                "visual-diff",
+                "--before",
+                before_dir.to_str().unwrap(),
+                "--after",
+                after_dir.to_str().unwrap(),
+                "--baseline-ref",
+                "merge-base@integration",
+            ])
+            .env("SIEVE_CONFIG", &config_path),
+    );
+    assert_eq!(
+        visual.pointer("/summary/changed").and_then(Value::as_u64),
+        Some(1)
+    );
+    let visual_blocks = visual
+        .get("blocks")
+        .and_then(Value::as_array)
+        .unwrap()
+        .clone();
+    assert!(visual_blocks[0]
+        .pointer("/data/diff/attachmentId")
+        .and_then(Value::as_str)
+        .is_some());
+    write_manifest_with_blocks(&manifest_path, &idempotency_key, "v3", visual_blocks);
+    json_command(
+        command()
+            .args([
+                "--host",
+                &server,
+                "publish",
+                "--manifest",
+                manifest_path.to_str().unwrap(),
+            ])
+            .env("SIEVE_CONFIG", &config_path),
+    );
+    let review_with_visuals = json_command(
+        command()
+            .args(["--host", &server, "get", &review_id])
+            .env("SIEVE_CONFIG", &config_path),
+    );
+    assert!(contains_block_type(&review_with_visuals, "image-diff"));
+
     let fake_bin = config_dir.path().join("bin");
     fs::create_dir_all(&fake_bin).unwrap();
     let fake_gh = fake_bin.join("gh");
@@ -462,6 +515,21 @@ fn write_fake_gh(path: &std::path::Path, script: &str) {
 }
 
 fn write_manifest(path: &std::path::Path, idempotency_key: &str, version: &str) {
+    write_manifest_with_blocks(path, idempotency_key, version, vec![]);
+}
+
+fn write_manifest_with_blocks(
+    path: &std::path::Path,
+    idempotency_key: &str,
+    version: &str,
+    extra_blocks: Vec<Value>,
+) {
+    let mut blocks = vec![json!({
+        "id": "summary",
+        "type": "rich-text",
+        "data": { "markdown": format!("## Outcome\nCLI integration {version}.") }
+    })];
+    blocks.extend(extra_blocks);
     fs::write(
         path,
         serde_json::to_string_pretty(&json!({
@@ -472,18 +540,39 @@ fn write_manifest(path: &std::path::Path, idempotency_key: &str, version: &str) 
             "changeNote": version,
             "content": {
                 "version": 1,
-                "blocks": [{
-                    "id": "summary",
-                    "type": "rich-text",
-                    "data": {
-                        "markdown": format!("## Outcome\nCLI integration {version}.")
-                    }
-                }]
+                "blocks": blocks
             }
         }))
         .unwrap(),
     )
     .unwrap();
+}
+
+fn write_rgba_png(path: &std::path::Path, pixel: [u8; 4]) {
+    let file = fs::File::create(path).unwrap();
+    let mut encoder = png::Encoder::new(file, 1, 1);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder
+        .write_header()
+        .unwrap()
+        .write_image_data(&pixel)
+        .unwrap();
+}
+
+fn contains_block_type(value: &Value, block_type: &str) -> bool {
+    match value {
+        Value::Object(map) => {
+            (map.get("type").and_then(Value::as_str) == Some(block_type))
+                || map
+                    .values()
+                    .any(|value| contains_block_type(value, block_type))
+        }
+        Value::Array(values) => values
+            .iter()
+            .any(|value| contains_block_type(value, block_type)),
+        _ => false,
+    }
 }
 
 fn uuidish() -> String {
