@@ -14,7 +14,7 @@ use std::{
     process::{Command, Stdio},
 };
 
-const DEFAULT_HOST: &str = "http://localhost:3000";
+const DEFAULT_HOST: &str = "http://localhost:7919";
 const MAX_ATTACHMENT_BYTES: u64 = 2_000_000;
 const MAX_KEY_DIFFS: usize = 5;
 const MAX_DIFF_LINES: usize = 150;
@@ -2708,13 +2708,13 @@ mod tests {
     #[test]
     fn renders_common_tty_outputs_as_human_text() {
         let status = render_human(&json!({
-            "host": "http://localhost:3000",
+            "host": "http://localhost:7919",
             "hasToken": true,
             "whoami": { "user": { "email": "agent@localhost" } },
             "schemaDrift": false,
             "warnings": ["token expires within 7 days"]
         }));
-        assert!(status.contains("Host: http://localhost:3000"));
+        assert!(status.contains("Host: http://localhost:7919"));
         assert!(status.contains("User: agent@localhost"));
         assert!(status.contains("Warning: token expires within 7 days"));
 
@@ -2762,7 +2762,7 @@ mod tests {
         let path = dir.path().join("config.json");
         env::set_var("SIEVE_CONFIG", &path);
         let mut config = Config::default();
-        config.set_token("http://localhost:3000", "sieve_test", Some("token-id"));
+        config.set_token("http://localhost:7919", "sieve_test", Some("token-id"));
         config.save().unwrap();
         assert_eq!(
             fs::metadata(&path).unwrap().permissions().mode() & 0o777,

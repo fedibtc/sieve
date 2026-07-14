@@ -38,7 +38,7 @@ pnpm install
 pnpm dev
 ```
 
-Open `http://localhost:3000/reviews`. Localhost uses the sanctioned local-dev auth bypass; production still requires Better Auth configuration.
+Open `http://localhost:7919/reviews`. Localhost uses the sanctioned local-dev auth bypass; production still requires Better Auth configuration.
 
 By default the app stores data in `data/pglite`. Set `DATABASE_URL` to use Postgres.
 

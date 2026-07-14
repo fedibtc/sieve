@@ -38,7 +38,7 @@ async function createAuth() {
     secret:
       process.env.BETTER_AUTH_SECRET ??
       "dev-secret-change-me-dev-secret-change-me",
-    baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:3000",
+    baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:7919",
     socialProviders: {
       google: {
         clientId: googleClientId,

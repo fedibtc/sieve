@@ -8,7 +8,7 @@ import { basename, join, resolve } from "node:path";
 
 const args = parseArgs(process.argv.slice(2));
 const repoPath = resolve(args.repo ?? process.cwd());
-const serverUrl = (args.serverUrl ?? "http://localhost:3000").replace(
+const serverUrl = (args.serverUrl ?? "http://localhost:7919").replace(
   /\/$/,
   "",
 );
@@ -503,7 +503,7 @@ Options:
   --base <ref>                 Base ref for merge-base resolution (default: origin/master)
   --head <ref>                 Head ref for merge-base resolution (default: HEAD)
   --showcase-command <cmd>     Command that captures showcase-*.png files
-  --server-url <url>           Sieve URL (default: http://localhost:3000)
+  --server-url <url>           Sieve URL (default: http://localhost:7919)
   --cache-dir <dir>            Baseline cache root
   --max-blocks <n>             Maximum image-diff blocks (default: 10)
   --manifest-only              Do not upload; use sha256 pseudo attachment ids

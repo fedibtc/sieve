@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const root = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
-const host = process.env.SIEVE_TEST_SERVER ?? "http://localhost:3000";
+const host = process.env.SIEVE_TEST_SERVER ?? "http://localhost:7919";
 const credentialAppPath = process.env.CREDENTIAL_APP_PATH;
 
 main();
