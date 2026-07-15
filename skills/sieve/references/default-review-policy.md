@@ -47,10 +47,12 @@ judgment. Use `sieve attach` plus hand-authored blocks only when directory
 pairing cannot express the change.
 
 If required visual evidence cannot be produced, do not present the recap as
-complete. Say so in chat, add a warning callout to the recap, and publish with
-`--allow-missing-visual-evidence <reason>`. Never fabricate, relabel, or
-hand-edit a comparison. Treat a flapping screen as a determinism bug. Never
-publish screenshots containing real secrets or credentials.
+complete. Say so in chat and publish with
+`--allow-missing-visual-evidence <reason>`. The CLI adds a warning callout with
+that reason to the published recap so reviewers can see what is missing. Never
+fabricate, relabel, or hand-edit a comparison. Treat a flapping screen as a
+determinism bug. Never publish screenshots containing real secrets or
+credentials.
 
 ## Recap shape
 

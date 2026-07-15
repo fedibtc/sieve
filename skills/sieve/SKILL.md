@@ -57,7 +57,7 @@ Skip Sieve for trivial diffs where a normal chat summary is enough. Use it when 
    sieve visual-diff --before <before-dir> --after <after-dir> --baseline-ref <merge-base-ref>
    ```
 
-   Splice the emitted `image-diff` blocks directly after the outcome. If required visual evidence cannot be produced, say so in chat, add a warning callout to the recap, and publish only with `--allow-missing-visual-evidence <reason>`. Never present a recap as complete when required evidence is silently missing.
+   Splice the emitted `image-diff` blocks directly after the outcome. If required visual evidence cannot be produced, say so in chat and publish only with `--allow-missing-visual-evidence <reason>`. The CLI adds a warning callout containing that reason to the published recap so reviewers can see what is missing. Never present a recap as complete when required evidence is silently missing.
 
 6. Dry-run publish before sending:
 

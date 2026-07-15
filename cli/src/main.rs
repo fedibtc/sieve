@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     env, fs,
     io::{self, Write},
     path::{Path, PathBuf},
@@ -601,12 +601,16 @@ fn publish(client: &ApiClient, args: PublishArgs) -> Result<Value> {
     let mut warnings = schema_drift_warnings(client);
     let policy = policy::discover();
     warnings.extend(policy.warnings());
-    let (visual_quality_warnings, visual_warnings) = visual_evidence_warnings(
-        &manifest,
-        &policy,
-        args.allow_missing_visual_evidence.as_deref(),
-    )?;
+    let (visual_quality_warnings, visual_warnings, visual_review_warning) =
+        visual_evidence_warnings(
+            &manifest,
+            &policy,
+            args.allow_missing_visual_evidence.as_deref(),
+        )?;
     warnings.extend(visual_warnings);
+    if let Some(markdown) = visual_review_warning {
+        insert_review_output_warning(&mut manifest, "missing-visual-evidence", markdown)?;
+    }
     warnings.extend(expand_manifest(&mut manifest, args.allow_unverified_diffs)?);
     validate_manifest_content(&manifest)?;
     validate_reviewer_focus(&manifest)?;
@@ -1884,7 +1888,7 @@ fn visual_evidence_warnings(
     manifest: &Value,
     policy: &policy::EffectivePolicy,
     waiver: Option<&str>,
-) -> Result<(Vec<String>, Vec<String>)> {
+) -> Result<(Vec<String>, Vec<String>, Option<String>)> {
     if manifest
         .pointer("/content/blocks")
         .and_then(Value::as_array)
@@ -1894,12 +1898,12 @@ fn visual_evidence_warnings(
                 .any(|block| block.get("type").and_then(Value::as_str) == Some("image-diff"))
         })
     {
-        return Ok((vec![], vec![]));
+        return Ok((vec![], vec![], None));
     }
     let paths = manifest_review_paths(manifest);
     let declared = policy.ui_paths();
     if declared.is_some_and(<[String]>::is_empty) {
-        return Ok((vec![], vec![]));
+        return Ok((vec![], vec![], None));
     }
     let patterns = declared.map(|items| items.to_vec()).unwrap_or_else(|| {
         DEFAULT_UI_GLOBS
@@ -1909,7 +1913,7 @@ fn visual_evidence_warnings(
     });
     let matched = matching_paths(paths.iter().map(String::as_str), &patterns)?;
     if matched.is_empty() {
-        return Ok((vec![], vec![]));
+        return Ok((vec![], vec![], None));
     }
     let samples = matched
         .iter()
@@ -1926,12 +1930,57 @@ fn visual_evidence_warnings(
             return Ok((
                 vec![],
                 vec![format!("{warning}; waived because: {}", reason.trim())],
+                Some(format!(
+                    "**Missing visual evidence.** This review changes project-declared UI paths ({samples}) but includes no image comparison. **Waiver reason:** {}",
+                    reason.trim()
+                )),
             ));
         }
-        Ok((vec![warning], vec![]))
+        Ok((vec![warning], vec![], None))
     } else {
-        Ok((vec![], vec![format!("Changed files match common UI paths ({samples}) and the recap has no image-diff blocks; if this change is user-visible, the default policy requires visual evidence (`sieve policy show`). Declare `ui-paths` in `.sieve/review-policy.md` to make this check blocking, or `ui-paths: []` to disable it.")]))
+        Ok((vec![], vec![format!("Changed files match common UI paths ({samples}) and the recap has no image-diff blocks; if this change is user-visible, the default policy requires visual evidence (`sieve policy show`). Declare `ui-paths` in `.sieve/review-policy.md` to make this check blocking, or `ui-paths: []` to disable it.")], None))
     }
+}
+
+fn insert_review_output_warning(
+    manifest: &mut Value,
+    base_id: &str,
+    markdown: String,
+) -> Result<()> {
+    let blocks = manifest
+        .pointer_mut("/content/blocks")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| anyhow!("content.blocks must be an array"))?;
+    let existing_ids = blocks
+        .iter()
+        .filter_map(|block| block.get("id").and_then(Value::as_str))
+        .collect::<BTreeSet<_>>();
+    let id = (1..)
+        .map(|suffix| {
+            if suffix == 1 {
+                base_id.to_string()
+            } else {
+                format!("{base_id}-{suffix}")
+            }
+        })
+        .find(|candidate| !existing_ids.contains(candidate.as_str()))
+        .expect("an unused generated warning id");
+    let insert_at = blocks
+        .iter()
+        .position(|block| {
+            block.get("id").and_then(Value::as_str) == Some("summary")
+                && block.get("type").and_then(Value::as_str) == Some("rich-text")
+        })
+        .map_or(0, |index| index + 1);
+    blocks.insert(
+        insert_at,
+        json!({
+            "id": id,
+            "type": "callout",
+            "data": { "tone": "warning", "markdown": markdown }
+        }),
+    );
+    Ok(())
 }
 
 fn manifest_review_paths(manifest: &Value) -> Vec<String> {
@@ -3503,7 +3552,7 @@ mod tests {
     #[test]
     fn visual_evidence_gate_blocks_declared_paths_and_supports_waivers() {
         let manifest = json!({
-            "content": { "blocks": [{
+            "content": { "version": 1, "blocks": [{
                 "id": "files", "type": "file-tree", "data": { "entries": [
                     { "path": "src/components/Screen.tsx", "change": "modified" }
                 ] }
@@ -3520,14 +3569,37 @@ mod tests {
             }),
             discovery_warnings: vec![],
         };
-        let (quality, warnings) = visual_evidence_warnings(&manifest, &policy, None).unwrap();
+        let (quality, warnings, review_warning) =
+            visual_evidence_warnings(&manifest, &policy, None).unwrap();
         assert_eq!(quality.len(), 1);
         assert!(warnings.is_empty());
-        let (quality, warnings) =
+        assert!(review_warning.is_none());
+        let (quality, warnings, review_warning) =
             visual_evidence_warnings(&manifest, &policy, Some("capture environment unavailable"))
                 .unwrap();
         assert!(quality.is_empty());
         assert!(warnings[0].contains("capture environment unavailable"));
+        assert!(review_warning.as_deref().is_some_and(
+            |warning| warning.contains("**Waiver reason:** capture environment unavailable")
+        ));
+
+        let mut published = manifest.clone();
+        insert_review_output_warning(
+            &mut published,
+            "missing-visual-evidence",
+            review_warning.unwrap(),
+        )
+        .unwrap();
+        let callout = published.pointer("/content/blocks/0").unwrap();
+        assert_eq!(
+            callout.get("id").and_then(Value::as_str),
+            Some("missing-visual-evidence")
+        );
+        assert_eq!(
+            callout.pointer("/data/tone").and_then(Value::as_str),
+            Some("warning")
+        );
+        validate_manifest_content(&published).unwrap();
 
         let mut with_image = manifest.clone();
         with_image
@@ -3538,7 +3610,7 @@ mod tests {
             .push(json!({ "id": "visual", "type": "image-diff", "data": {} }));
         assert_eq!(
             visual_evidence_warnings(&with_image, &policy, None).unwrap(),
-            (vec![], vec![])
+            (vec![], vec![], None)
         );
     }
 
@@ -3548,10 +3620,11 @@ mod tests {
             "id": "code", "type": "annotated-code-ref", "path": "app/page.tsx"
         }] } });
         let default_policy = policy::EffectivePolicy::default();
-        let (quality, warnings) =
+        let (quality, warnings, review_warning) =
             visual_evidence_warnings(&manifest, &default_policy, None).unwrap();
         assert!(quality.is_empty());
         assert_eq!(warnings.len(), 1);
+        assert!(review_warning.is_none());
 
         let disabled = policy::EffectivePolicy {
             project: Some(policy::ProjectPolicy {
@@ -3566,8 +3639,41 @@ mod tests {
         };
         assert_eq!(
             visual_evidence_warnings(&manifest, &disabled, None).unwrap(),
-            (vec![], vec![])
+            (vec![], vec![], None)
         );
+    }
+
+    #[test]
+    fn generated_review_warnings_are_visible_and_use_unique_ids() {
+        let mut manifest = json!({ "content": { "version": 1, "blocks": [
+            {
+                "id": "summary",
+                "type": "rich-text",
+                "data": { "markdown": "## Outcome\nReady for review." }
+            },
+            {
+                "id": "missing-visual-evidence",
+                "type": "callout",
+                "data": { "tone": "info", "markdown": "An authored note." }
+            }
+        ] } });
+        insert_review_output_warning(
+            &mut manifest,
+            "missing-visual-evidence",
+            "**Missing visual evidence.** **Waiver reason:** browser unavailable".to_string(),
+        )
+        .unwrap();
+
+        let warning = manifest.pointer("/content/blocks/1").unwrap();
+        assert_eq!(
+            warning.get("id").and_then(Value::as_str),
+            Some("missing-visual-evidence-2")
+        );
+        assert_eq!(
+            warning.pointer("/data/tone").and_then(Value::as_str),
+            Some("warning")
+        );
+        validate_manifest_content(&manifest).unwrap();
     }
 
     fn read_block_fixture(name: &str) -> Value {
