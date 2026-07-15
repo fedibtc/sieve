@@ -10,7 +10,21 @@ import * as schema from "./schema";
 
 type Db = ReturnType<typeof drizzlePglite> | ReturnType<typeof drizzlePg>;
 
-let dbPromise: Promise<Db> | undefined;
+type DatabaseState = {
+  promise?: Promise<Db>;
+  close?: () => Promise<void>;
+  devShutdownHandlerInstalled?: boolean;
+};
+
+const globalWithDatabase = globalThis as typeof globalThis & {
+  __sieveDatabase?: DatabaseState;
+};
+const moduleDatabaseState: DatabaseState = {};
+let databaseState = moduleDatabaseState;
+if (process.env.NODE_ENV === "development") {
+  databaseState = globalWithDatabase.__sieveDatabase ?? {};
+  globalWithDatabase.__sieveDatabase = databaseState;
+}
 
 function isVercelProductionWithoutDatabase() {
   return process.env.VERCEL && !process.env.DATABASE_URL;
@@ -21,12 +35,13 @@ export function getDatabaseUrl() {
 }
 
 export async function getDb() {
-  dbPromise ??= createDb();
-  return dbPromise;
+  databaseState.promise ??= createDb();
+  return databaseState.promise;
 }
 
 export function resetDbForTests() {
-  dbPromise = undefined;
+  databaseState.promise = undefined;
+  databaseState.close = undefined;
 }
 
 async function createDb(): Promise<Db> {
@@ -37,6 +52,7 @@ async function createDb(): Promise<Db> {
   const databaseUrl = getDatabaseUrl();
   if (databaseUrl && !databaseUrl.startsWith("pglite:")) {
     const pool = new Pool({ connectionString: databaseUrl, max: 2 });
+    databaseState.close = () => pool.end();
     return drizzlePg(pool, { schema });
   }
 
@@ -52,6 +68,8 @@ async function createDb(): Promise<Db> {
   }
   const { PGlite } = await import("@electric-sql/pglite");
   const client = new PGlite(path);
+  databaseState.close = () => client.close();
+  installDevShutdownHandler();
   const db = drizzlePglite(client, { schema });
   await seedDrizzleMigrationsFromLegacyTracker(db);
   await migratePglite(db, {
@@ -59,6 +77,25 @@ async function createDb(): Promise<Db> {
     migrationsSchema: "drizzle",
   });
   return db;
+}
+
+function installDevShutdownHandler() {
+  if (
+    process.env.NODE_ENV !== "development" ||
+    databaseState.devShutdownHandlerInstalled
+  ) {
+    return;
+  }
+  databaseState.devShutdownHandlerInstalled = true;
+  process.once("SIGHUP", () => {
+    const close = databaseState.close;
+    databaseState.promise = undefined;
+    databaseState.close = undefined;
+    if (!close) {
+      process.exit(0);
+    }
+    void close().finally(() => process.exit(0));
+  });
 }
 
 export async function migrateDatabase() {

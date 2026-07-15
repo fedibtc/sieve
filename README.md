@@ -40,7 +40,10 @@ pnpm dev
 
 Open `http://localhost:3000/reviews`. Localhost uses the sanctioned local-dev auth bypass; production still requires Better Auth configuration.
 
-By default the app stores data in `data/pglite`. Set `DATABASE_URL` to use Postgres.
+By default the app stores data in `data/pglite`. The development server keeps
+one embedded database client across hot reloads and closes it when the dev
+process stops, so reviews survive ordinary restarts. Set `DATABASE_URL` to use
+Postgres.
 
 ## Useful Commands
 
