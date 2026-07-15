@@ -2017,6 +2017,23 @@ fn review_quality_warnings(manifest: &Value) -> Vec<String> {
                 ));
             }
         }
+        if block.get("type").and_then(Value::as_str) == Some("callout") {
+            let id = block.get("id").and_then(Value::as_str).unwrap_or("unknown");
+            let markdown = block
+                .pointer("/data/markdown")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if id == "visual-evidence"
+                && markdown
+                    .to_ascii_lowercase()
+                    .contains("replace with the image-diff blocks")
+            {
+                warnings.push(
+                    "scaffold visual-evidence callout must be replaced or removed before publishing"
+                        .to_string(),
+                );
+            }
+        }
         if block.get("type").and_then(Value::as_str) != Some("rich-text") {
             continue;
         }
@@ -3431,6 +3448,35 @@ mod tests {
         });
         let warnings = review_quality_warnings(&manifest);
         assert_eq!(warnings.len(), 3);
+    }
+
+    #[test]
+    fn blocks_unreplaced_visual_scaffold_callout() {
+        let manifest = json!({
+            "content": { "blocks": [
+                {
+                    "id": "visual-evidence",
+                    "type": "callout",
+                    "data": {
+                        "tone": "warning",
+                        "markdown": "Replace with the image-diff blocks from `sieve visual-diff`."
+                    }
+                },
+                {
+                    "id": "visual-settings",
+                    "type": "image-diff",
+                    "data": {
+                        "name": "settings",
+                        "status": "added",
+                        "after": { "attachmentId": "attachment", "width": 1, "height": 1 }
+                    }
+                }
+            ] }
+        });
+        assert_eq!(
+            review_quality_warnings(&manifest),
+            ["scaffold visual-evidence callout must be replaced or removed before publishing"]
+        );
     }
 
     #[test]

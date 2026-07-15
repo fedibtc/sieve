@@ -152,6 +152,7 @@ pub fn parse_frontmatter(markdown: &str) -> (PolicyFrontmatter, Vec<String>) {
     let mut current_key: Option<String> = None;
     let mut ui_paths = vec![];
     let mut ui_paths_declared = false;
+    let mut ui_paths_explicitly_disabled = false;
     let mut closed = false;
     for (index, raw) in lines {
         let line = raw.trim();
@@ -169,6 +170,13 @@ pub fn parse_frontmatter(markdown: &str) -> (PolicyFrontmatter, Vec<String>) {
                     index + 1
                 ));
                 continue;
+            }
+            if ui_paths_explicitly_disabled {
+                warnings.push(format!(
+                    "policy frontmatter line {} adds an item after ui-paths: []; mechanical checks disabled",
+                    index + 1
+                ));
+                return (PolicyFrontmatter::default(), warnings);
             }
             let value = unquote(value.trim());
             if value.is_empty() {
@@ -194,8 +202,13 @@ pub fn parse_frontmatter(markdown: &str) -> (PolicyFrontmatter, Vec<String>) {
         match key {
             "ui-paths" => {
                 ui_paths_declared = true;
-                if value == "[]" || value.is_empty() {
-                    // Empty scalar opens a list; [] explicitly declares no paths.
+                if value == "[]" {
+                    ui_paths_explicitly_disabled = true;
+                    ui_paths.clear();
+                } else if value.is_empty() {
+                    // Empty scalar opens a list; at least one item must follow.
+                    ui_paths_explicitly_disabled = false;
+                    ui_paths.clear();
                 } else {
                     warnings.push(format!(
                         "policy frontmatter ui-paths must be a list or [] (line {})",
@@ -214,7 +227,14 @@ pub fn parse_frontmatter(markdown: &str) -> (PolicyFrontmatter, Vec<String>) {
         );
         return (PolicyFrontmatter::default(), warnings);
     }
-    if ui_paths_declared {
+    if ui_paths_explicitly_disabled {
+        parsed.ui_paths = Some(ui_paths);
+    } else if ui_paths_declared && ui_paths.is_empty() {
+        warnings.push(
+            "policy frontmatter ui-paths list has no entries; blocking checks are disabled and the default UI heuristic remains active"
+                .to_string(),
+        );
+    } else if ui_paths_declared {
         parsed.ui_paths = Some(ui_paths);
     }
     (parsed, warnings)
@@ -271,6 +291,16 @@ mod tests {
         let (frontmatter, warnings) = parse_frontmatter("---\nui-paths: []\n---\n");
         assert_eq!(frontmatter.ui_paths, Some(vec![]));
         assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn warns_when_ui_paths_list_is_opened_without_entries() {
+        let (frontmatter, warnings) =
+            parse_frontmatter("---\nui-paths:\n# - src/**/*.tsx\n---\n# Policy\n");
+        assert!(frontmatter.ui_paths.is_none());
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("list has no entries"));
+        assert!(warnings[0].contains("default UI heuristic remains active"));
     }
 
     #[test]

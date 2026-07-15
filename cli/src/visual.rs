@@ -84,12 +84,19 @@ pub fn run(client: &ApiClient, args: VisualDiffArgs) -> Result<Value> {
                 if before_image.width != after_image.width
                     || before_image.height != after_image.height
                 {
+                    let overlay =
+                        compare_dimension_change(&before_image, &after_image, args.pixel_threshold);
+                    let overlay_path = diff_dir.join(format!("{}.png", name));
+                    if let Some(parent) = overlay_path.parent() {
+                        fs::create_dir_all(parent)?;
+                    }
+                    encode_png(&overlay_path, &overlay)?;
                     changed.push(Item {
                         name,
                         status: "changed",
                         before: Some(before_path.clone()),
                         after: Some(after_path.clone()),
-                        diff: None,
+                        diff: Some(overlay_path),
                         summary: Some(format!(
                             "dimensions changed {}×{} → {}×{}",
                             before_image.width,
@@ -331,6 +338,44 @@ fn compare(before: &Image, after: &Image, pixel_threshold: f64) -> (f64, Image) 
     )
 }
 
+fn compare_dimension_change(before: &Image, after: &Image, pixel_threshold: f64) -> Image {
+    let width = before.width.max(after.width);
+    let height = before.height.max(after.height);
+    let limit = pixel_threshold * 255.0;
+    let mut rgba = Vec::with_capacity((width as usize) * (height as usize) * 4);
+    for y in 0..height {
+        for x in 0..width {
+            match (pixel_at(before, x, y), pixel_at(after, x, y)) {
+                (Some(old), Some(new)) => {
+                    let delta = (0..4)
+                        .map(|index| old[index].abs_diff(new[index]) as f64)
+                        .fold(0.0, f64::max);
+                    if delta > limit {
+                        rgba.extend_from_slice(&[255, 0, 0, 255]);
+                    } else {
+                        let gray = ((new[0] as u16 + new[1] as u16 + new[2] as u16) / 6) as u8;
+                        rgba.extend_from_slice(&[gray, gray, gray, 255]);
+                    }
+                }
+                _ => rgba.extend_from_slice(&[255, 0, 0, 255]),
+            }
+        }
+    }
+    Image {
+        width,
+        height,
+        rgba,
+    }
+}
+
+fn pixel_at(image: &Image, x: u32, y: u32) -> Option<&[u8]> {
+    if x >= image.width || y >= image.height {
+        return None;
+    }
+    let index = ((y as usize) * (image.width as usize) + (x as usize)) * 4;
+    Some(&image.rgba[index..index + 4])
+}
+
 fn encode_png(path: &Path, image: &Image) -> Result<()> {
     let file = fs::File::create(path)?;
     let mut encoder = png::Encoder::new(file, image.width, image.height);
@@ -510,7 +555,7 @@ mod tests {
     }
 
     #[test]
-    fn dimension_changes_have_no_overlay_and_explain_dimensions() {
+    fn dimension_changes_emit_publishable_padded_overlays() {
         let dir = tempfile::tempdir().unwrap();
         let before = dir.path().join("before");
         let after = dir.path().join("after");
@@ -550,12 +595,32 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(result.pointer("/blocks/0/data/diff").is_none());
+        assert!(result
+            .pointer("/blocks/0/data/diff/attachmentId")
+            .and_then(Value::as_str)
+            .unwrap()
+            .starts_with("sha256:"));
+        assert_eq!(
+            result
+                .pointer("/blocks/0/data/diff/width")
+                .and_then(Value::as_u64),
+            Some(2)
+        );
+        assert_eq!(
+            result
+                .pointer("/blocks/0/data/diff/height")
+                .and_then(Value::as_u64),
+            Some(1)
+        );
         assert_eq!(
             result.pointer("/blocks/0/summary").and_then(Value::as_str),
             Some("dimensions changed 1×1 → 2×1")
         );
         assert!(result.pointer("/blocks/0/data/baseline").is_none());
+        crate::validate_manifest_content(&json!({
+            "content": { "version": 1, "blocks": result["blocks"] }
+        }))
+        .unwrap();
     }
 
     #[test]
