@@ -33,6 +33,9 @@ See `docs/connect.md` for agent setup and `docs/fedi-dev-shell.md` for the fedi 
 
 ## Local Dev
 
+Use Node.js 24. Node.js 25 is outside this repository's supported runtime
+range and can leave the Next.js development error reporter in a hot loop.
+
 ```bash
 pnpm install
 pnpm dev

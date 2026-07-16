@@ -1,0 +1,10 @@
+"$schema" = "https://conductor.build/schemas/settings.repo.schema.json"
+
+[scripts]
+setup = "nix develop --command corepack pnpm install"
+run_mode = "concurrent"
+
+[scripts.run.dev]
+command = "BETTER_AUTH_URL=http://localhost:$CONDUCTOR_PORT nix develop --command corepack pnpm dev --port $CONDUCTOR_PORT"
+default = true
+icon = "play"
