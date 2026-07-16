@@ -1,33 +1,24 @@
----
-# Globs that mark a change as UI-facing. Declaring ui-paths makes Sieve's
-# publish-time check blocking. Leave the key undeclared for the advisory common
-# UI-path heuristic, or declare `ui-paths: []` to disable visual checks.
-# ui-paths:
-#   - "src/**/*.tsx"
-#   - "src/**/*.css"
----
+# Review Guidance
 
-# Review Policy
+Repository-specific guidance for agents preparing Sieve reviews. Document the
+commands and conventions already appropriate for this project. Sieve displays
+this file to the agent but does not mechanically enforce its editorial rules.
 
-Project-specific requirements for Sieve reviews of this repository. This file
-is authoritative over the default policy printed by `sieve policy show`. Keep
-it specific to this repository: validation commands, UI-facing paths, capture
-methods, domain block mappings, and extra requirements.
+## Validation
 
-## Validation gate
-
-<!-- Name the exact commands an agent must run and report before publishing. -->
+<!-- Name the commands an agent should run and report before publishing. -->
 
 ## Visual evidence
 
-<!-- Explain how this repository captures deterministic before/after PNGs,
-where they are written, how to capture the merge-base, and what to mask. End
-with `sieve visual-diff --before <dir> --after <dir>`. -->
+<!-- Explain which changes benefit from visual evidence and how this repository
+produces it. Point to existing screenshot, visual-regression, end-to-end, story,
+or preview tooling and describe where its artifacts are written. Do not assume
+that Sieve captures or compares images. -->
 
 ## Block mappings
 
-<!-- Optionally map this repository's domain surfaces to preferred block types. -->
+<!-- Optionally map this repository's domain surfaces to useful block types. -->
 
-## Extra requirements
+## Additional guidance
 
-<!-- Add any other requirements for a good review of this project. -->
+<!-- Add any other repository-specific advice for a useful review. -->

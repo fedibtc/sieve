@@ -1,7 +1,6 @@
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, Duration, Utc};
 use clap::{error::ErrorKind, Args, Parser, Subcommand, ValueEnum};
-use globset::{Glob, GlobSetBuilder};
 use is_terminal::IsTerminal;
 use reqwest::blocking::{Client, RequestBuilder};
 use serde::{Deserialize, Serialize};
@@ -16,13 +15,11 @@ use std::{
 };
 
 mod policy;
-mod visual;
 
 const DEFAULT_HOST: &str = "http://localhost:3000";
 const MAX_ATTACHMENT_BYTES: u64 = 2_000_000;
 const MAX_KEY_DIFFS: usize = 5;
 const MAX_DIFF_LINES: usize = 150;
-const LARGE_DIFF_LINES: usize = 100;
 const MAX_BLOCKS: usize = 120;
 const MAX_DOC_BYTES: usize = 2_000_000;
 const BLOCK_SCHEMA: &str = include_str!("../../schemas/block.schema.json");
@@ -74,7 +71,6 @@ enum Commands {
     Reopen(ReviewId),
     Session(SessionCommand),
     Attach(AttachArgs),
-    VisualDiff(visual::VisualDiffArgs),
     PrComment(ReviewId),
     Skill(SkillCommand),
     Policy(PolicyCommand),
@@ -124,8 +120,8 @@ struct PublishArgs {
     allow_findings: Vec<String>,
     #[arg(long)]
     allow_unverified_diffs: bool,
-    #[arg(long)]
-    allow_missing_visual_evidence: Option<String>,
+    #[arg(long = "review-warning")]
+    review_warnings: Vec<String>,
 }
 
 #[derive(Args)]
@@ -351,7 +347,6 @@ fn run(cli: Cli, json_output: bool) -> Result<()> {
         Commands::Reopen(args) => update_status(&client, args.review_id, "open"),
         Commands::Session(args) => session(&client, args.command),
         Commands::Attach(args) => attach(&client, args),
-        Commands::VisualDiff(args) => visual::run(&client, args),
         Commands::PrComment(args) => pr_comment(&client, args.review_id),
         Commands::Skill(args) => match args.command {
             SkillSubcommand::Show(show_args) => {
@@ -515,12 +510,6 @@ fn scaffold(args: ScaffoldArgs) -> Result<Value> {
         .filter(|file| !is_excluded_file(file))
         .collect::<Vec<_>>();
     let key_files = visible_files.iter().take(MAX_KEY_DIFFS).collect::<Vec<_>>();
-    let policy = policy::discover();
-    let ui_paths_matched = policy
-        .ui_paths()
-        .map(|patterns| matching_paths(files.iter().map(|file| file.path.as_str()), patterns))
-        .transpose()?
-        .unwrap_or_default();
     let mut blocks = vec![
         json!({
             "id": "summary",
@@ -536,16 +525,6 @@ fn scaffold(args: ScaffoldArgs) -> Result<Value> {
             "data": { "entries": files.iter().map(file_tree_entry).collect::<Vec<_>>() }
         }),
     ];
-    if !ui_paths_matched.is_empty() {
-        blocks.insert(1, json!({
-            "id": "visual-evidence",
-            "type": "callout",
-            "data": {
-                "tone": "warning",
-                "markdown": "Replace with the image-diff blocks from `sieve visual-diff`: this branch touches UI paths and the project policy requires visual evidence. If the change has no visible effect, delete this block and say why in the summary."
-            }
-        }));
-    }
     if key_files.len() > 1 {
         blocks.push(json!({
             "id": "key-changes",
@@ -583,12 +562,11 @@ fn scaffold(args: ScaffoldArgs) -> Result<Value> {
         "baseRef": args.base,
         "headSha": git(["rev-parse", &args.head]).ok(),
         "idempotencyKey": idempotency_key,
-        "uiPathsMatched": ui_paths_matched,
         "content": { "version": 1, "blocks": blocks }
     });
     if let Some(path) = args.output {
         fs::write(&path, serde_json::to_string_pretty(&manifest)?)?;
-        Ok(json!({ "manifest": path, "files": files.len(), "uiPathsMatched": ui_paths_matched }))
+        Ok(json!({ "manifest": path, "files": files.len() }))
     } else {
         Ok(manifest)
     }
@@ -601,28 +579,14 @@ fn publish(client: &ApiClient, args: PublishArgs) -> Result<Value> {
     let mut warnings = schema_drift_warnings(client);
     let policy = policy::discover();
     warnings.extend(policy.warnings());
-    let (visual_quality_warnings, visual_warnings, visual_review_warning) =
-        visual_evidence_warnings(
-            &manifest,
-            &policy,
-            args.allow_missing_visual_evidence.as_deref(),
-        )?;
-    warnings.extend(visual_warnings);
-    if let Some(markdown) = visual_review_warning {
-        insert_review_output_warning(&mut manifest, "missing-visual-evidence", markdown)?;
+    for warning in args.review_warnings {
+        if warning.trim().is_empty() {
+            bail!("--review-warning requires a non-empty message");
+        }
+        insert_review_output_warning(&mut manifest, "review-warning", warning.trim().to_string())?;
     }
     warnings.extend(expand_manifest(&mut manifest, args.allow_unverified_diffs)?);
     validate_manifest_content(&manifest)?;
-    validate_reviewer_focus(&manifest)?;
-    let mut quality_warnings = review_quality_warnings(&manifest);
-    quality_warnings.extend(visual_quality_warnings);
-    if !args.dry_run && !quality_warnings.is_empty() {
-        bail!(
-            "review quality warnings blocked publish: {}",
-            quality_warnings.join("; ")
-        );
-    }
-    warnings.extend(quality_warnings);
     enforce_budgets(&manifest)?;
     let findings = redact_findings(&manifest);
     let blocked_findings = findings
@@ -1755,193 +1719,6 @@ fn validate_manifest_content(manifest: &Value) -> Result<()> {
     Ok(())
 }
 
-fn validate_reviewer_focus(manifest: &Value) -> Result<()> {
-    let Some(blocks) = manifest
-        .pointer("/content/blocks")
-        .and_then(Value::as_array)
-    else {
-        return Ok(());
-    };
-    for (index, block) in blocks.iter().enumerate() {
-        if !is_key_evidence_block(block)
-            || index
-                .checked_sub(1)
-                .and_then(|previous| blocks.get(previous))
-                .is_some_and(is_key_evidence_block)
-        {
-            continue;
-        }
-        let run_length = blocks[index..]
-            .iter()
-            .take_while(|candidate| is_key_evidence_block(candidate))
-            .count();
-        if run_length > 1
-            && !index
-                .checked_sub(1)
-                .and_then(|previous| blocks.get(previous))
-                .is_some_and(is_key_changes_section)
-        {
-            bail!(
-                "{run_length} consecutive key code evidence blocks need an explicit `Key changes` section"
-            );
-        }
-    }
-    for block in blocks {
-        let id = block.get("id").and_then(Value::as_str).unwrap_or("unknown");
-        let block_type = block.get("type").and_then(Value::as_str).unwrap_or("");
-        if id == "omitted-files"
-            || (block_type == "rich-text"
-                && block
-                    .pointer("/data/markdown")
-                    .and_then(Value::as_str)
-                    .is_some_and(|markdown| {
-                        let lower = markdown.to_ascii_lowercase();
-                        lower.contains("## omitted files")
-                            || lower.contains("## omitted from key diffs")
-                    }))
-        {
-            bail!(
-                "review block `{id}` repeats omitted files; keep the complete footprint in file-tree and remove omission prose"
-            );
-        }
-        if block_type != "diff" && block_type != "annotated-code" {
-            continue;
-        }
-        let filename = block
-            .pointer("/data/filename")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown");
-        let summary = block
-            .get("summary")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|summary| !summary.is_empty())
-            .ok_or_else(|| {
-                anyhow!("{block_type} block `{id}` needs a one-line reviewer-intent summary")
-            })?;
-        if is_placeholder_review_summary(summary, filename) {
-            bail!(
-                "{block_type} block `{id}` has generated summary `{summary}`; describe what changed and why it matters"
-            );
-        }
-        if block_type == "diff" {
-            let before = block
-                .pointer("/data/before")
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            let after = block
-                .pointer("/data/after")
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            if before.trim().is_empty() && !after.trim().is_empty() {
-                bail!(
-                    "added file `{filename}` is a one-sided diff; use annotated-code with focused annotations"
-                );
-            }
-        }
-    }
-    Ok(())
-}
-
-fn is_key_evidence_block(block: &Value) -> bool {
-    matches!(
-        block.get("type").and_then(Value::as_str),
-        Some("diff" | "annotated-code" | "diff-ref" | "annotated-code-ref")
-    )
-}
-
-fn is_key_changes_section(block: &Value) -> bool {
-    match block.get("type").and_then(Value::as_str) {
-        Some("section") => block
-            .pointer("/data/title")
-            .and_then(Value::as_str)
-            .is_some_and(|title| title.trim().eq_ignore_ascii_case("key changes")),
-        Some("rich-text") => block
-            .pointer("/data/markdown")
-            .and_then(Value::as_str)
-            .is_some_and(|markdown| markdown.trim().eq_ignore_ascii_case("## key changes")),
-        _ => false,
-    }
-}
-
-fn is_placeholder_review_summary(summary: &str, filename: &str) -> bool {
-    let lower = summary.trim().to_ascii_lowercase();
-    if lower == "key change" || lower.starts_with("replace with ") {
-        return true;
-    }
-    ["added", "modified", "removed", "renamed"]
-        .iter()
-        .any(|status| lower == format!("{status} {}", filename.to_ascii_lowercase()))
-}
-
-const DEFAULT_UI_GLOBS: &[&str] = &[
-    "**/*.tsx",
-    "**/*.jsx",
-    "**/*.vue",
-    "**/*.svelte",
-    "**/*.css",
-    "**/*.scss",
-    "**/*.less",
-];
-
-fn visual_evidence_warnings(
-    manifest: &Value,
-    policy: &policy::EffectivePolicy,
-    waiver: Option<&str>,
-) -> Result<(Vec<String>, Vec<String>, Option<String>)> {
-    if manifest
-        .pointer("/content/blocks")
-        .and_then(Value::as_array)
-        .is_some_and(|blocks| {
-            blocks
-                .iter()
-                .any(|block| block.get("type").and_then(Value::as_str) == Some("image-diff"))
-        })
-    {
-        return Ok((vec![], vec![], None));
-    }
-    let paths = manifest_review_paths(manifest);
-    let declared = policy.ui_paths();
-    if declared.is_some_and(<[String]>::is_empty) {
-        return Ok((vec![], vec![], None));
-    }
-    let patterns = declared.map(|items| items.to_vec()).unwrap_or_else(|| {
-        DEFAULT_UI_GLOBS
-            .iter()
-            .map(|item| item.to_string())
-            .collect()
-    });
-    let matched = matching_paths(paths.iter().map(String::as_str), &patterns)?;
-    if matched.is_empty() {
-        return Ok((vec![], vec![], None));
-    }
-    let samples = matched
-        .iter()
-        .take(5)
-        .cloned()
-        .collect::<Vec<_>>()
-        .join(", ");
-    if declared.is_some() {
-        let warning = format!("UI paths matched ({samples}) but the recap has no image-diff blocks; capture visual evidence per `sieve policy show`, or pass `--allow-missing-visual-evidence <reason>`");
-        if let Some(reason) = waiver {
-            if reason.trim().is_empty() {
-                bail!("--allow-missing-visual-evidence requires a non-empty reason");
-            }
-            return Ok((
-                vec![],
-                vec![format!("{warning}; waived because: {}", reason.trim())],
-                Some(format!(
-                    "**Missing visual evidence.** This review changes project-declared UI paths ({samples}) but includes no image comparison. **Waiver reason:** {}",
-                    reason.trim()
-                )),
-            ));
-        }
-        Ok((vec![warning], vec![], None))
-    } else {
-        Ok((vec![], vec![format!("Changed files match common UI paths ({samples}) and the recap has no image-diff blocks; if this change is user-visible, the default policy requires visual evidence (`sieve policy show`). Declare `ui-paths` in `.sieve/review-policy.md` to make this check blocking, or `ui-paths: []` to disable it.")], None))
-    }
-}
-
 fn insert_review_output_warning(
     manifest: &mut Value,
     base_id: &str,
@@ -1981,139 +1758,6 @@ fn insert_review_output_warning(
         }),
     );
     Ok(())
-}
-
-fn manifest_review_paths(manifest: &Value) -> Vec<String> {
-    let mut paths = BTreeMap::<String, ()>::new();
-    let Some(blocks) = manifest
-        .pointer("/content/blocks")
-        .and_then(Value::as_array)
-    else {
-        return vec![];
-    };
-    for block in blocks {
-        match block.get("type").and_then(Value::as_str) {
-            Some("file-tree") => {
-                if let Some(entries) = block.pointer("/data/entries").and_then(Value::as_array) {
-                    for entry in entries {
-                        if let Some(path) = entry.get("path").and_then(Value::as_str) {
-                            paths.insert(path.to_string(), ());
-                        }
-                    }
-                }
-            }
-            Some("diff") | Some("annotated-code") => {
-                if let Some(path) = block.pointer("/data/filename").and_then(Value::as_str) {
-                    paths.insert(path.to_string(), ());
-                }
-            }
-            Some("diff-ref") | Some("annotated-code-ref") => {
-                if let Some(path) = block.get("path").and_then(Value::as_str) {
-                    paths.insert(path.to_string(), ());
-                }
-            }
-            _ => {}
-        }
-    }
-    paths.into_keys().collect()
-}
-
-fn matching_paths<'a>(
-    paths: impl Iterator<Item = &'a str>,
-    patterns: &[String],
-) -> Result<Vec<String>> {
-    let mut builder = GlobSetBuilder::new();
-    for pattern in patterns {
-        builder
-            .add(Glob::new(pattern).with_context(|| format!("invalid ui-path glob `{pattern}`"))?);
-    }
-    let set = builder.build()?;
-    Ok(paths
-        .filter(|path| set.is_match(path))
-        .map(str::to_string)
-        .collect())
-}
-
-fn review_quality_warnings(manifest: &Value) -> Vec<String> {
-    let Some(blocks) = manifest
-        .pointer("/content/blocks")
-        .and_then(Value::as_array)
-    else {
-        return vec![];
-    };
-    let mut warnings = Vec::new();
-    for block in blocks {
-        if block.get("type").and_then(Value::as_str) == Some("diff") {
-            let id = block.get("id").and_then(Value::as_str).unwrap_or("unknown");
-            let before_lines = block
-                .pointer("/data/before")
-                .and_then(Value::as_str)
-                .map(|text| text.lines().count())
-                .unwrap_or(0);
-            let after_lines = block
-                .pointer("/data/after")
-                .and_then(Value::as_str)
-                .map(|text| text.lines().count())
-                .unwrap_or(0);
-            let annotations = block
-                .pointer("/data/annotations")
-                .and_then(Value::as_array)
-                .map(Vec::len)
-                .unwrap_or(0);
-            if before_lines.max(after_lines) >= LARGE_DIFF_LINES && annotations == 0 {
-                warnings.push(format!(
-                    "large diff block `{id}` needs focused annotations for reviewer navigation"
-                ));
-            }
-        }
-        if block.get("type").and_then(Value::as_str) == Some("callout") {
-            let id = block.get("id").and_then(Value::as_str).unwrap_or("unknown");
-            let markdown = block
-                .pointer("/data/markdown")
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            if id == "visual-evidence"
-                && markdown
-                    .to_ascii_lowercase()
-                    .contains("replace with the image-diff blocks")
-            {
-                warnings.push(
-                    "scaffold visual-evidence callout must be replaced or removed before publishing"
-                        .to_string(),
-                );
-            }
-        }
-        if block.get("type").and_then(Value::as_str) != Some("rich-text") {
-            continue;
-        }
-        let id = block.get("id").and_then(Value::as_str).unwrap_or("unknown");
-        let markdown = block
-            .pointer("/data/markdown")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let lower = markdown.to_ascii_lowercase();
-        if lower.contains("diff basis:") {
-            warnings.push(format!(
-                "review block `{id}` includes diff provenance already carried by review metadata"
-            ));
-        }
-        if lower.contains("## visual changes")
-            && (lower.contains("merge-base")
-                || lower.contains(" unchanged")
-                || lower.contains("darwin-")
-                || lower.contains("linux-"))
-        {
-            warnings.push(format!(
-                "review block `{id}` exposes screenshot-generation metadata; place image-diff blocks directly after the outcome"
-            ));
-        }
-        if lower.contains("first publish") || lower.contains("capture harness") {
-            warnings.push(format!(
-                "review block `{id}` narrates agent/capture process instead of reviewer-facing change context"
-            ));
-        }
-    }
-    warnings
 }
 
 fn validate_document_invariants(document: &Value) -> Result<()> {
@@ -3366,285 +3010,7 @@ mod tests {
     }
 
     #[test]
-    fn scaffold_nudges_when_declared_ui_paths_match() {
-        let _guard = CWD_LOCK.lock().unwrap();
-        let previous_dir = env::current_dir().unwrap();
-        let repo = tempfile::tempdir().unwrap();
-        setup_diff_repo(repo.path());
-        fs::create_dir_all(repo.path().join(".sieve")).unwrap();
-        fs::write(
-            repo.path().join(".sieve/review-policy.md"),
-            "---\nui-paths:\n  - src/**/*.tsx\n---\n# Review Policy\n",
-        )
-        .unwrap();
-        fs::create_dir_all(repo.path().join("src/components")).unwrap();
-        fs::write(
-            repo.path().join("src/components/Screen.tsx"),
-            "export function Screen() { return <main />; }\n",
-        )
-        .unwrap();
-        git_test(repo.path(), &["add", "src/components/Screen.tsx"]);
-        git_test(repo.path(), &["commit", "-m", "add screen"]);
-        env::set_current_dir(repo.path()).unwrap();
-
-        let manifest = scaffold(ScaffoldArgs {
-            base: "master".to_string(),
-            head: "HEAD".to_string(),
-            output: None,
-        })
-        .unwrap();
-        assert_eq!(
-            manifest
-                .pointer("/uiPathsMatched/0")
-                .and_then(Value::as_str),
-            Some("src/components/Screen.tsx")
-        );
-        assert_eq!(
-            manifest
-                .pointer("/content/blocks/1/id")
-                .and_then(Value::as_str),
-            Some("visual-evidence")
-        );
-
-        env::set_current_dir(previous_dir).unwrap();
-    }
-
-    #[test]
-    fn reviewer_focus_rejects_generated_context() {
-        let one_sided = json!({
-            "content": { "blocks": [{
-                "id": "added",
-                "type": "diff",
-                "summary": "Runs Axe over holder states",
-                "data": { "filename": "new.ts", "before": "", "after": "test();" }
-            }] }
-        });
-        assert!(validate_reviewer_focus(&one_sided)
-            .unwrap_err()
-            .to_string()
-            .contains("use annotated-code"));
-
-        let omitted = json!({
-            "content": { "blocks": [{
-                "id": "omitted-files",
-                "type": "rich-text",
-                "data": { "markdown": "## Omitted files\n- lockfile" }
-            }] }
-        });
-        assert!(validate_reviewer_focus(&omitted)
-            .unwrap_err()
-            .to_string()
-            .contains("file-tree"));
-
-        let generated_summary = json!({
-            "content": { "blocks": [{
-                "id": "holder",
-                "type": "diff",
-                "summary": "modified src/Holder.tsx",
-                "data": {
-                    "filename": "src/Holder.tsx",
-                    "before": "old",
-                    "after": "new"
-                }
-            }] }
-        });
-        assert!(validate_reviewer_focus(&generated_summary)
-            .unwrap_err()
-            .to_string()
-            .contains("describe what changed and why"));
-
-        let ungrouped = json!({
-            "content": { "blocks": [
-                {
-                    "id": "one",
-                    "type": "diff",
-                    "summary": "Changes the first behavior",
-                    "data": { "filename": "one.ts", "before": "old", "after": "new" }
-                },
-                {
-                    "id": "two",
-                    "type": "annotated-code",
-                    "summary": "Introduces the second behavior",
-                    "data": { "filename": "two.ts", "code": "export const two = true;" }
-                }
-            ] }
-        });
-        assert!(validate_reviewer_focus(&ungrouped)
-            .unwrap_err()
-            .to_string()
-            .contains("explicit `Key changes` section"));
-
-        let grouped = json!({
-            "content": { "blocks": [
-                { "id": "key-changes", "type": "section", "data": { "title": "Key changes" } },
-                ungrouped.pointer("/content/blocks/0").unwrap(),
-                ungrouped.pointer("/content/blocks/1").unwrap()
-            ] }
-        });
-        validate_reviewer_focus(&grouped).unwrap();
-    }
-
-    #[test]
-    fn warns_about_process_metadata_in_review_prose() {
-        let manifest = json!({
-            "content": { "blocks": [{
-                "id": "summary",
-                "type": "rich-text",
-                "data": {
-                    "markdown": "## Visual changes\n2 changed, 17 unchanged vs merge-base@abc on darwin-arm64.\n\nDiff basis: origin/master...HEAD. The first publish used a capture harness."
-                }
-            }] }
-        });
-        let warnings = review_quality_warnings(&manifest);
-        assert_eq!(warnings.len(), 3);
-    }
-
-    #[test]
-    fn blocks_unreplaced_visual_scaffold_callout() {
-        let manifest = json!({
-            "content": { "blocks": [
-                {
-                    "id": "visual-evidence",
-                    "type": "callout",
-                    "data": {
-                        "tone": "warning",
-                        "markdown": "Replace with the image-diff blocks from `sieve visual-diff`."
-                    }
-                },
-                {
-                    "id": "visual-settings",
-                    "type": "image-diff",
-                    "data": {
-                        "name": "settings",
-                        "status": "added",
-                        "after": { "attachmentId": "attachment", "width": 1, "height": 1 }
-                    }
-                }
-            ] }
-        });
-        assert_eq!(
-            review_quality_warnings(&manifest),
-            ["scaffold visual-evidence callout must be replaced or removed before publishing"]
-        );
-    }
-
-    #[test]
-    fn warns_about_large_unannotated_diffs() {
-        let manifest = json!({
-            "content": { "blocks": [{
-                "id": "large-diff",
-                "type": "diff",
-                "summary": "Changes a large policy surface",
-                "data": {
-                    "filename": "policy.ts",
-                    "before": "before",
-                    "after": (0..LARGE_DIFF_LINES).map(|index| format!("line {index}")).collect::<Vec<_>>().join("\n"),
-                    "annotations": []
-                }
-            }] }
-        });
-        assert_eq!(
-            review_quality_warnings(&manifest),
-            vec!["large diff block `large-diff` needs focused annotations for reviewer navigation"]
-        );
-    }
-
-    #[test]
-    fn visual_evidence_gate_blocks_declared_paths_and_supports_waivers() {
-        let manifest = json!({
-            "content": { "version": 1, "blocks": [{
-                "id": "files", "type": "file-tree", "data": { "entries": [
-                    { "path": "src/components/Screen.tsx", "change": "modified" }
-                ] }
-            }] }
-        });
-        let policy = policy::EffectivePolicy {
-            project: Some(policy::ProjectPolicy {
-                path: PathBuf::from(".sieve/review-policy.md"),
-                markdown: String::new(),
-                frontmatter: policy::PolicyFrontmatter {
-                    ui_paths: Some(vec!["src/**/*.tsx".to_string()]),
-                },
-                warnings: vec![],
-            }),
-            discovery_warnings: vec![],
-        };
-        let (quality, warnings, review_warning) =
-            visual_evidence_warnings(&manifest, &policy, None).unwrap();
-        assert_eq!(quality.len(), 1);
-        assert!(warnings.is_empty());
-        assert!(review_warning.is_none());
-        let (quality, warnings, review_warning) =
-            visual_evidence_warnings(&manifest, &policy, Some("capture environment unavailable"))
-                .unwrap();
-        assert!(quality.is_empty());
-        assert!(warnings[0].contains("capture environment unavailable"));
-        assert!(review_warning.as_deref().is_some_and(
-            |warning| warning.contains("**Waiver reason:** capture environment unavailable")
-        ));
-
-        let mut published = manifest.clone();
-        insert_review_output_warning(
-            &mut published,
-            "missing-visual-evidence",
-            review_warning.unwrap(),
-        )
-        .unwrap();
-        let callout = published.pointer("/content/blocks/0").unwrap();
-        assert_eq!(
-            callout.get("id").and_then(Value::as_str),
-            Some("missing-visual-evidence")
-        );
-        assert_eq!(
-            callout.pointer("/data/tone").and_then(Value::as_str),
-            Some("warning")
-        );
-        validate_manifest_content(&published).unwrap();
-
-        let mut with_image = manifest.clone();
-        with_image
-            .pointer_mut("/content/blocks")
-            .unwrap()
-            .as_array_mut()
-            .unwrap()
-            .push(json!({ "id": "visual", "type": "image-diff", "data": {} }));
-        assert_eq!(
-            visual_evidence_warnings(&with_image, &policy, None).unwrap(),
-            (vec![], vec![], None)
-        );
-    }
-
-    #[test]
-    fn visual_evidence_heuristic_is_advisory_and_explicit_empty_disables_it() {
-        let manifest = json!({ "content": { "blocks": [{
-            "id": "code", "type": "annotated-code-ref", "path": "app/page.tsx"
-        }] } });
-        let default_policy = policy::EffectivePolicy::default();
-        let (quality, warnings, review_warning) =
-            visual_evidence_warnings(&manifest, &default_policy, None).unwrap();
-        assert!(quality.is_empty());
-        assert_eq!(warnings.len(), 1);
-        assert!(review_warning.is_none());
-
-        let disabled = policy::EffectivePolicy {
-            project: Some(policy::ProjectPolicy {
-                path: PathBuf::from(".sieve/review-policy.md"),
-                markdown: String::new(),
-                frontmatter: policy::PolicyFrontmatter {
-                    ui_paths: Some(vec![]),
-                },
-                warnings: vec![],
-            }),
-            discovery_warnings: vec![],
-        };
-        assert_eq!(
-            visual_evidence_warnings(&manifest, &disabled, None).unwrap(),
-            (vec![], vec![], None)
-        );
-    }
-
-    #[test]
-    fn generated_review_warnings_are_visible_and_use_unique_ids() {
+    fn authored_review_warnings_are_visible_and_use_unique_ids() {
         let mut manifest = json!({ "content": { "version": 1, "blocks": [
             {
                 "id": "summary",
@@ -3652,22 +3018,22 @@ mod tests {
                 "data": { "markdown": "## Outcome\nReady for review." }
             },
             {
-                "id": "missing-visual-evidence",
+                "id": "review-warning",
                 "type": "callout",
                 "data": { "tone": "info", "markdown": "An authored note." }
             }
         ] } });
         insert_review_output_warning(
             &mut manifest,
-            "missing-visual-evidence",
-            "**Missing visual evidence.** **Waiver reason:** browser unavailable".to_string(),
+            "review-warning",
+            "**Missing visual evidence.** Browser unavailable.".to_string(),
         )
         .unwrap();
 
         let warning = manifest.pointer("/content/blocks/1").unwrap();
         assert_eq!(
             warning.get("id").and_then(Value::as_str),
-            Some("missing-visual-evidence-2")
+            Some("review-warning-2")
         );
         assert_eq!(
             warning.pointer("/data/tone").and_then(Value::as_str),

@@ -96,15 +96,15 @@ sieve publish --manifest recap.json --dry-run
 sieve publish --manifest recap.json
 ```
 
-Before publishing, run `sieve policy show`, prune the draft to the effective review policy, and include the validation commands you actually ran.
+Before publishing, run `sieve policy show`, use it alongside the repository's own conventions, and include the validation commands you actually ran.
 
-For UI-facing changes, capture deterministic before and after PNGs using the project policy or repository's own harness, then generate ready-to-splice visual blocks:
+For UI-facing changes, use the repository's own capture and comparison workflow. Sieve does not prescribe or run that workflow. Upload useful artifacts it produces and reference the returned attachment IDs in authored visual blocks:
 
 ```bash
-sieve visual-diff --before before/ --after after/ --baseline-ref merge-base@abc123
+sieve attach path/to/screenshot.png
 ```
 
-Sieve owns comparison, diff overlays, uploads, and block emission; each project owns how its screenshots are captured. Run `sieve policy init` to commit repository-specific validation and visual-capture requirements.
+If important review output is unavailable, make the limitation visible with `sieve publish --manifest recap.json --review-warning "<what is missing and why>"`. Run `sieve policy init` to commit repository-specific authoring guidance.
 
 ## Known Simplifications
 

@@ -44,7 +44,7 @@ sieve publish --manifest recap.json
 sieve feedback <reviewId>
 ```
 
-Run `sieve policy show` before authoring. If the branch has UI changes, capture deterministic before and after PNG directories using the project policy or repository's existing harness, run `sieve visual-diff --before <dir> --after <dir>`, and splice the returned `image-diff` blocks into `recap.json` before publishing.
+Run `sieve policy show` before authoring and use it alongside the repository's own conventions. For UI changes, discover the repository's capture and comparison workflow, upload useful artifacts with `sieve attach`, and reference them in authored `image-diff` blocks. If important output is unavailable, publish an explicit warning with `--review-warning "<what is missing and why>"`.
 
 ## Integration Check
 

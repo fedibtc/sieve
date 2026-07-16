@@ -18,7 +18,6 @@ dirs = "6.0"
 hex = "0.4"
 is-terminal = "0.4"
 jsonschema = "0.18"
-globset = "0.4"
 png = "0.17"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "multipart", "rustls-tls"] }
 serde = { version = "1.0", features = ["derive"] }

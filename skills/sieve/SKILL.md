@@ -21,7 +21,7 @@ Use this skill when working in a Fedi repo branch that should be reviewed throug
    sieve skill install
    ```
 
-3. Read the effective review policy before authoring. The project section is authoritative for validation commands, evidence requirements, and block mappings:
+3. Read the available review guidance before authoring. The project section can document repository-specific validation commands, evidence workflows, and block mappings:
 
    ```bash
    sieve policy show
@@ -41,7 +41,7 @@ Skip Sieve for trivial diffs where a normal chat summary is enough. Use it when 
 
 1. Inspect the real git diff. Do not summarize from memory.
 2. Run `sieve status`; note any schema drift warning before authoring blocks.
-3. Run the project validation gate from `sieve policy show`, or the repository's own docs and CI configuration when no project policy exists. Report the exact commands and results in the summary.
+3. Run the repository's validation gate. Use its docs and CI configuration, plus any project guidance shown by `sieve policy show`, to discover the appropriate commands. Report the exact commands and results in the summary.
 
 4. Generate a starter manifest from the repo worktree:
 
@@ -51,13 +51,17 @@ Skip Sieve for trivial diffs where a normal chat summary is enough. Use it when 
 
    The scaffold is a bounded candidate list, not a publishable recap. Edit `recap.json`: replace every placeholder summary with reviewer intent, remove evidence that is tiny or redundant, add annotations, and include exact validation results.
 
-5. For UI-facing changes, follow the project policy's capture instructions. If it is silent, use the repository's existing screenshot, end-to-end, story, or preview harness; otherwise improvise a deterministic capture with repository-appropriate tooling. Capture before and after PNG directories on the same machine, using the merge-base for the baseline and masking dynamic content. Once the PNGs exist, generate visual blocks:
+5. For UI-facing changes, determine how this repository produces visual evidence. Check project guidance, repository docs, package scripts, CI, and existing screenshot, visual-regression, end-to-end, story, or preview tooling. The developing agent owns that workflow; Sieve does not prescribe a capture or comparison command.
+
+   Publish useful artifacts produced by that workflow with `sieve attach`, then reference the returned attachment IDs in authored `image-diff` blocks. A comparison status or diff image must come from the repository's actual tooling; do not infer one from screenshots alone.
+
+   If important review evidence is unavailable, say so in chat and make the limitation visible in the review:
 
    ```bash
-   sieve visual-diff --before <before-dir> --after <after-dir> --baseline-ref <merge-base-ref>
+   sieve publish --manifest recap.json --review-warning "<what is missing and why>"
    ```
 
-   Splice the emitted `image-diff` blocks directly after the outcome. If required visual evidence cannot be produced, say so in chat and publish only with `--allow-missing-visual-evidence <reason>`. The CLI adds a warning callout containing that reason to the published recap so reviewers can see what is missing. Never present a recap as complete when required evidence is silently missing.
+   `--review-warning` is repeatable and publishes the supplied text as a warning callout. Sieve does not decide when a warning is needed or waive a repository requirement.
 
 6. Dry-run publish before sending:
 
@@ -65,7 +69,7 @@ Skip Sieve for trivial diffs where a normal chat summary is enough. Use it when 
    sieve publish --manifest recap.json --dry-run
    ```
 
-   Treat every review-quality warning as an authoring failure. Fix the manifest rather than publishing noisy context.
+   Fix schema, grounding, attachment, or redaction problems before publishing.
 
 7. Publish with the same `idempotencyKey` for updates so the review becomes v2, v3, and so on:
 
@@ -90,7 +94,7 @@ The deliverable is the published Sieve recap, never an inline Markdown substitut
 
 ## Recap Contract
 
-Author content to the effective requirements printed by `sieve policy show`. The default policy defines recap shape, visual-evidence expectations, and generic block mappings; a project's `.sieve/review-policy.md` may tighten or relax those requirements. It cannot relax the grounding and honesty invariants in this skill.
+Use the guidance printed by `sieve policy show` alongside the repository's own conventions. The default guidance suggests recap shape and generic block mappings; a project's `.sieve/review-policy.md` can explain what is useful for that codebase. Sieve publishes the result rather than mechanically enforcing those authoring choices.
 
 Never silently truncate a block. The `file-tree` is the complete footprint; do not add an omitted-files prose block that repeats it. Exclude lockfiles, generated assets, minified files, binaries, build output, and routine dependency manifests from key evidence unless that file is itself review-critical.
 
@@ -112,7 +116,7 @@ Treat screenshots and comparison verdicts as mechanical artifacts. Do not fabric
 
 A `diff-ref` that expands beyond the CLI evidence limit is an authoring error, not permission to truncate. Replace it with a verified, focused literal `diff` containing exact text from the real before and after blobs.
 
-Commands in this skill are always `sieve` subcommands. Real validation and capture commands come from the project policy and repository documentation.
+Commands in this skill are always `sieve` subcommands. Real validation, capture, and comparison commands come from the repository's tooling and documentation.
 
 ## Feedback Loop
 
