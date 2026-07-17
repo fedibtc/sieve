@@ -1,8 +1,21 @@
 "use client";
 
-function signInWith(provider: "google" | "github") {
-  const callbackURL = "/reviews";
-  window.location.href = `/api/auth/sign-in/social?provider=${provider}&callbackURL=${encodeURIComponent(callbackURL)}`;
+// The social sign-in endpoint is POST-only; it returns the provider
+// authorization URL instead of redirecting.
+async function signInWith(provider: "google" | "github") {
+  const response = await fetch("/api/auth/sign-in/social", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ provider, callbackURL: "/reviews" }),
+  });
+  const data = (await response.json().catch(() => null)) as {
+    url?: string;
+  } | null;
+  if (data?.url) {
+    window.location.href = data.url;
+  } else {
+    window.location.href = "/login?error=signin";
+  }
 }
 
 const buttonClassName =
