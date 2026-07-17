@@ -5,6 +5,6 @@ setup = "nix develop --command corepack pnpm install"
 run_mode = "nonconcurrent"
 
 [scripts.run.dev]
-command = "BETTER_AUTH_URL=http://localhost:3000 nix develop --command corepack pnpm dev --port 3000"
+command = "BETTER_AUTH_URL=http://localhost:7919 nix develop --command corepack pnpm dev --port 7919"
 default = true
 icon = "play"
