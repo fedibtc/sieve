@@ -29,7 +29,7 @@ export default async function TokensPage() {
 
   const requestHeaders = await headers();
   const protocol = requestHeaders.get("x-forwarded-proto") ?? "http";
-  const host = requestHeaders.get("host") ?? "localhost:3000";
+  const host = requestHeaders.get("host") ?? "localhost:7919";
 
   return (
     <TokenSettings

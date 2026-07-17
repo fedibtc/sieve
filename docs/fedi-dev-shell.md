@@ -55,7 +55,7 @@ nix develop "$FEDI_CHECKOUT" \
   --command sieve status
 ```
 
-Expected result: `sieve status` resolves in the shell and reports the local Sieve user when `http://localhost:3000` is running.
+Expected result: `sieve status` resolves in the shell and reports the local Sieve user when `http://localhost:7919` is running.
 
 The agent skill needs no flake wiring in `fedi`. It is embedded in the Sieve binary and installed explicitly:
 

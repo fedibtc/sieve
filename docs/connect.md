@@ -8,7 +8,7 @@ Localhost intentionally supports tokenless agent requests for development:
 
 ```bash
 sieve skill install
-sieve --host http://localhost:3000 status
+sieve --host http://localhost:7919 status
 ```
 
 The skill is embedded in the CLI. Run `sieve skill install` once per machine, and rerun it whenever `sieve status` reports the installed skill as missing or stale.
@@ -16,8 +16,8 @@ The skill is embedded in the CLI. Run `sieve skill install` once per machine, an
 To exercise the bearer-token path locally without SSO:
 
 ```bash
-sieve --host http://localhost:3000 login --dev
-sieve --host http://localhost:3000 status
+sieve --host http://localhost:7919 login --dev
+sieve --host http://localhost:7919 status
 ```
 
 `login --dev` mints a real `sieve_` API key through `/api/tokens` and stores it in the CLI config file with private permissions.
@@ -51,7 +51,7 @@ Run `sieve policy show` before authoring and use it alongside the repository's o
 With `pnpm dev` already running, the CLI integration loop can be verified with:
 
 ```bash
-SIEVE_TEST_SERVER=http://localhost:3000 \
+SIEVE_TEST_SERVER=http://localhost:7919 \
   cargo test --manifest-path cli/Cargo.toml --test agent_loop -- --nocapture
 ```
 

@@ -7,9 +7,9 @@
     "node": ">=22 <25"
   },
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 7919",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -p 7919",
     "lint": "biome check .",
     "format": "biome format --write .",
     "test": "vitest run",
