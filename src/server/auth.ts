@@ -1,15 +1,25 @@
 import { apiKey } from "@better-auth/api-key";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { APIError } from "better-auth/api";
 import { nextCookies } from "better-auth/next-js";
 import { getDb } from "./db/client";
 import * as schema from "./db/schema";
-import { getAllowedDomains, isAllowedEmailDomain } from "./env";
+import {
+  getAllowedDomains,
+  isAllowedEmailDomain,
+  isAllowedGithubUser,
+} from "./env";
+import { approveGithubEmail, takeGithubApproval } from "./github-login-gate";
 
 const googleClientId =
   process.env.GOOGLE_CLIENT_ID ?? "missing-google-client-id";
 const googleClientSecret =
   process.env.GOOGLE_CLIENT_SECRET ?? "missing-google-client-secret";
+const githubClientId =
+  process.env.GITHUB_CLIENT_ID ?? "missing-github-client-id";
+const githubClientSecret =
+  process.env.GITHUB_CLIENT_SECRET ?? "missing-github-client-secret";
 
 let authPromise: ReturnType<typeof createAuth> | undefined;
 
@@ -46,12 +56,31 @@ async function createAuth() {
         prompt: "select_account",
         hd: getAllowedDomains()[0],
       },
+      github: {
+        clientId: githubClientId,
+        clientSecret: githubClientSecret,
+        mapProfileToUser: (profile) => {
+          if (!isAllowedGithubUser(profile.login)) {
+            throw new APIError("UNAUTHORIZED", {
+              message: "GitHub account is not allowlisted",
+            });
+          }
+          approveGithubEmail(profile.email);
+          return {};
+        },
+      },
     },
     databaseHooks: {
       user: {
         create: {
           before: async (user) => {
-            if (!user.emailVerified || !isAllowedEmailDomain(user.email)) {
+            if (!user.emailVerified) {
+              return false;
+            }
+            if (
+              !isAllowedEmailDomain(user.email) &&
+              !takeGithubApproval(user.email)
+            ) {
               return false;
             }
             return { data: user };
