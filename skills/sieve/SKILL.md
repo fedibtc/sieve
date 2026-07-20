@@ -21,13 +21,19 @@ Use this skill when working in a Fedi repo branch that should be reviewed throug
    sieve skill install
    ```
 
-3. Localhost can use the sanctioned dev auth bypass with no token. To exercise the bearer path locally, run:
+3. Read the available review guidance before authoring. The project section can document repository-specific validation commands, evidence workflows, and block mappings:
+
+   ```bash
+   sieve policy show
+   ```
+
+4. Localhost can use the sanctioned dev auth bypass with no token. To exercise the bearer path locally, run:
 
    ```bash
    sieve login --dev
    ```
 
-4. For non-local hosts, use `SIEVE_TOKEN` or a stored CLI login token. Do not pass tokens on argv.
+5. For non-local hosts, use `SIEVE_TOKEN` or a stored CLI login token. Do not pass tokens on argv.
 
 ## Publish
 
@@ -35,11 +41,7 @@ Skip Sieve for trivial diffs where a normal chat summary is enough. Use it when 
 
 1. Inspect the real git diff. Do not summarize from memory.
 2. Run `sieve status`; note any schema drift warning before authoring blocks.
-3. Run the repo validation gate yourself before publishing. For credential-app, use:
-
-   ```bash
-   pnpm check && pnpm test && pnpm test:worker && pnpm build
-   ```
+3. Run the repository's validation gate. Use its docs and CI configuration, plus any project guidance shown by `sieve policy show`, to discover the appropriate commands. Report the exact commands and results in the summary.
 
 4. Generate a starter manifest from the repo worktree:
 
@@ -49,13 +51,17 @@ Skip Sieve for trivial diffs where a normal chat summary is enough. Use it when 
 
    The scaffold is a bounded candidate list, not a publishable recap. Edit `recap.json`: replace every placeholder summary with reviewer intent, remove evidence that is tiny or redundant, add annotations, and include exact validation results.
 
-5. If the branch touches rendered UI (`src/**/*.tsx`, CSS, or showcase e2e specs), generate visual blocks:
+5. For UI-facing changes, determine how this repository produces visual evidence. Check project guidance, repository docs, package scripts, CI, and existing screenshot, visual-regression, end-to-end, story, or preview tooling. The developing agent owns that workflow; Sieve does not prescribe a capture or comparison command.
+
+   Publish useful artifacts produced by that workflow with `sieve attach`, then reference the returned attachment IDs in authored `image-diff` blocks. A comparison status or diff image must come from the repository's actual tooling; do not infer one from screenshots alone.
+
+   If important review evidence is unavailable, say so in chat and make the limitation visible in the review:
 
    ```bash
-   node scripts/visual-diff-to-blocks.mjs --base master --head HEAD
+   sieve publish --manifest recap.json --review-warning "<what is missing and why>"
    ```
 
-   If you are not running from the skill directory, locate the installed `sieve/scripts/visual-diff-to-blocks.mjs` and run that copy. Localhost can use the dev auth bypass; non-local hosts should use `SIEVE_TOKEN`. The script captures showcase screenshots locally on the merge-base and branch, compares them with `reg-cli@0.18.16`, uploads PNGs directly to Sieve, and prints ready-to-splice blocks. Skip this step for non-UI changes.
+   `--review-warning` is repeatable and publishes the supplied text as a warning callout. Sieve does not decide when a warning is needed or waive a repository requirement.
 
 6. Dry-run publish before sending:
 
@@ -63,7 +69,7 @@ Skip Sieve for trivial diffs where a normal chat summary is enough. Use it when 
    sieve publish --manifest recap.json --dry-run
    ```
 
-   Treat every review-quality warning as an authoring failure. Fix the manifest rather than publishing noisy context.
+   Fix schema, grounding, attachment, or redaction problems before publishing.
 
 7. Publish with the same `idempotencyKey` for updates so the review becomes v2, v3, and so on:
 
@@ -88,14 +94,7 @@ The deliverable is the published Sieve recap, never an inline Markdown substitut
 
 ## Recap Contract
 
-Keep the title at 70 characters or less. Use this canonical shape unless the diff is very small:
-
-1. `summary` rich-text block: 1-3 short paragraphs covering what changed, why, material risk, and exact validation results.
-2. For UI-facing changes, put the `image-diff` blocks from `visual-diff-to-blocks.mjs` immediately after the outcome. They are the visual headline, not supporting evidence buried below code.
-3. Contract blocks for important domain surfaces (`data-model`, `api-endpoint`, `annotated-code`, or `mermaid`) before raw diffs when they explain the change better.
-4. `file-tree` block for the changed-file footprint.
-5. A `section` block with `data.title: "Key changes"` when there is more than one load-bearing code surface, followed immediately by focused `diff` / `annotated-code` blocks. Normally include 1-5 total; do not add blocks to meet a minimum. The explicit section groups those blocks into tabs; legacy `## Key changes` rich text remains readable but should not be authored for new reviews.
-6. Optional `question-form` only for real open questions. Do not ask the reviewer what validation ran; report your own validation results in the summary.
+Use the guidance printed by `sieve policy show` alongside the repository's own conventions. The default guidance suggests recap shape and generic block mappings; a project's `.sieve/review-policy.md` can explain what is useful for that codebase. Sieve publishes the result rather than mechanically enforcing those authoring choices.
 
 Never silently truncate a block. The `file-tree` is the complete footprint; do not add an omitted-files prose block that repeats it. Exclude lockfiles, generated assets, minified files, binaries, build output, and routine dependency manifests from key evidence unless that file is itself review-critical.
 
@@ -113,35 +112,11 @@ Before authoring, make a short inventory of changed behavior and surfaces. Every
 
 Omit a block when it only records agent process, troubleshooting history, recap-generation mechanics, provenance already present in review metadata, a routine dependency/lockfile update, or information already explained by another block. Cover the whole work unit by preserving all relevant outcomes, not by narrating every step the agent took.
 
-For visual changes:
+Treat screenshots and comparison verdicts as mechanical artifacts. Do not fabricate, edit, relabel, or describe a visual comparison that the evidence did not produce. Fix flapping captures rather than hand-waving them, and never publish screenshots containing real secrets, tokens, keys, cookies, or credentials.
 
-- Place the generated `image-diff` blocks directly after the outcome narrative for UI-facing work. The renderer labels them as visual comparisons; a separate `## Visual changes` prose heading is unnecessary.
-- Use the script's top-level `summary` as a machine receipt only. Do not paste changed/added/removed counts, merge-base refs, platform, cache status, masking details, or capture troubleshooting into reviewer-facing prose. Baseline ref and platform remain attached to each `image-diff` block as structured metadata.
-- Keep changed screens first, then added, then removed. Cap around 10 `image-diff` blocks; include the script's omitted-screen note when capped.
-- Treat screenshots and verdicts as mechanical artifacts. Do not fabricate, edit, relabel, or describe a visual diff that the script did not produce.
-- If a screen flaps between runs, fix the showcase masking/determinism first. Do not hand-wave the result.
-- Do not publish screenshots that show real secrets, tokens, private keys, cookies, or credentials.
+A `diff-ref` that expands beyond the CLI evidence limit is an authoring error, not permission to truncate. Replace it with a verified, focused literal `diff` containing exact text from the real before and after blobs.
 
-For credential-app, prefer these mappings:
-
-| Changed surface | Preferred block |
-| --- | --- |
-| IndexedDB, persisted record shape, migration logic | `data-model` |
-| QR payload parse/build/validation contracts (`*QrPayloads.ts`) | `api-endpoint` or `annotated-code` |
-| WASM/native boundary, worker message protocol | `annotated-code` plus focused diff |
-| User-visible verification or recovery flow | `mermaid` sequence plus focused diff |
-| Property tests, fuzz cases, regression fixtures | focused diff with annotations |
-
-Use these generic mapping rules outside credential-app:
-
-- Schema or migration changes go in `data-model`. Mark each entity or field with `change: "added" | "modified" | "removed"` and use `was` for changed types or shapes. Use a literal SQL/code `diff` only when the exact statement is itself important.
-- API, route, action, worker message, or protocol changes go in `api-endpoint`. Mark changed params with `change` and `was`; mark removed endpoints as removed in the endpoint `change`. Every request and response example must be one valid JSON value: no comments, no trailing commas, and no concatenated objects.
-- Every `diff` defaults to `mode: "split"` and needs a one-line `summary`; never leave a diff unlabeled. Put annotations on the after-side line numbers by default, using before-side only for pure removals. Large diffs require focused annotations so reviewers can navigate directly to the important lines.
-- A `diff-ref` that expands beyond the CLI evidence limit is an authoring error, not permission to truncate. Replace it with a verified, focused literal `diff` that contains exact text from the real before/after blobs.
-- Brand-new files or large added blocks with no meaningful before-side belong in `annotated-code`, not a one-sided split diff.
-- Summaries describe intent and review value, not file status. Write "Makes the tabs root the page landmark", not "modified HolderMode.tsx"; write "Runs Axe over three holder states", not "added app-accessibility.spec.ts".
-- Architecture or data-flow shifts belong in `mermaid` with a genuinely two-dimensional layout. Do not reduce structural changes to a left-to-right chain when a swimlane, layered graph, or before/after shape would be clearer.
-- Compatibility-sensitive changes get a short `callout` beside the relevant block and should be explicitly marked breaking, risky, or non-breaking. Use `tone: "risk"` for compatibility hazards, `warning` for operational caution, `decision` for an intentional tradeoff, `info` for neutral context, and `success` for a validated positive outcome.
+Commands in this skill are always `sieve` subcommands. Real validation, capture, and comparison commands come from the repository's tooling and documentation.
 
 ## Feedback Loop
 

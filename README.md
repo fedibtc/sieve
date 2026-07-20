@@ -15,7 +15,7 @@ sh "$installer"
 rm -f "$installer"
 ```
 
-The installer detects macOS/Linux and the current CPU architecture, verifies the release checksum, and installs to `~/.local/bin`. Use `--version v0.2.0` to pin a release or `--install-dir /path/to/bin` to change the destination.
+The installer detects macOS/Linux and the current CPU architecture, verifies the release checksum, and installs to `~/.local/bin`. Use `--version v0.3.0` to pin a release or `--install-dir /path/to/bin` to change the destination.
 
 ## Org Dev Quickstart
 
@@ -33,14 +33,20 @@ See `docs/connect.md` for agent setup and `docs/fedi-dev-shell.md` for the fedi 
 
 ## Local Dev
 
+Use Node.js 24. Node.js 25 is outside this repository's supported runtime
+range and can leave the Next.js development error reporter in a hot loop.
+
 ```bash
 pnpm install
 pnpm dev
 ```
 
-Open `http://localhost:3000/reviews`. Localhost uses the sanctioned local-dev auth bypass; production still requires Better Auth configuration.
+Open `http://localhost:7919/reviews`. Localhost uses the sanctioned local-dev auth bypass; production still requires Better Auth configuration.
 
-By default the app stores data in `data/pglite`. Set `DATABASE_URL` to use Postgres.
+By default the app stores data in `data/pglite`. The development server keeps
+one embedded database client across hot reloads and closes it when the dev
+process stops, so reviews survive ordinary restarts. Set `DATABASE_URL` to use
+Postgres.
 
 ## Useful Commands
 
@@ -90,15 +96,15 @@ sieve publish --manifest recap.json --dry-run
 sieve publish --manifest recap.json
 ```
 
-Before publishing, prune the draft to the recap contract in `skills/sieve/SKILL.md` and include the validation commands you actually ran.
+Before publishing, run `sieve policy show`, use it alongside the repository's own conventions, and include the validation commands you actually ran.
 
-For UI-facing credential-app branches, generate visual diff blocks. Localhost can use the dev auth bypass; non-local hosts need `SIEVE_TOKEN`:
+For UI-facing changes, use the repository's own capture and comparison workflow. Sieve does not prescribe or run that workflow. Upload useful artifacts it produces and reference the returned attachment IDs in authored visual blocks:
 
 ```bash
-node ~/.codex/skills/sieve/scripts/visual-diff-to-blocks.mjs --base master --head HEAD
+sieve attach path/to/screenshot.png
 ```
 
-The script captures showcase screenshots on the merge-base and branch, compares them with pinned `reg-cli@0.18.16`, uploads PNG attachments to Sieve, and prints `image-diff` blocks that can be spliced into the review content.
+If important review output is unavailable, make the limitation visible with `sieve publish --manifest recap.json --review-warning "<what is missing and why>"`. Run `sieve policy init` to commit repository-specific authoring guidance.
 
 ## Known Simplifications
 
@@ -111,18 +117,18 @@ The `/api/mcp` route remains available for old sessions during migration, but it
 GitHub Actions builds and publishes release binaries. Maintainers do not build or upload them locally.
 
 1. Update `version` in `cli/Cargo.toml` and commit the change after CI passes.
-2. Check the release plan with `nix develop --command nix run nixpkgs#cargo-dist -- plan --tag v0.2.0`.
+2. Check the release plan with `nix develop --command nix run nixpkgs#cargo-dist -- plan --tag v0.3.0`.
 3. Create and push the matching tag:
 
 ```bash
-git tag -s v0.2.0
-git push origin v0.2.0
+git tag -s v0.3.0
+git push origin v0.3.0
 ```
 
 `.github/workflows/release.yml` uses cargo-dist for native builds but uploads directly to a draft GitHub release because the organization does not currently have Actions artifact-storage capacity. Validate release configuration changes with:
 
 ```bash
-nix develop --command nix run nixpkgs#cargo-dist -- plan --tag v0.2.0
+nix develop --command nix run nixpkgs#cargo-dist -- plan --tag v0.3.0
 ```
 
 The release workflow runs the reusable preflight checks, builds each configured OS/architecture target, creates checksums, and publishes the draft GitHub release only when every required job succeeds.

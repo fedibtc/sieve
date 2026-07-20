@@ -7,18 +7,19 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     env, fs,
     io::{self, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
 
-const DEFAULT_HOST: &str = "http://localhost:3000";
+mod policy;
+
+const DEFAULT_HOST: &str = "http://localhost:7919";
 const MAX_ATTACHMENT_BYTES: u64 = 2_000_000;
 const MAX_KEY_DIFFS: usize = 5;
 const MAX_DIFF_LINES: usize = 150;
-const LARGE_DIFF_LINES: usize = 100;
 const MAX_BLOCKS: usize = 120;
 const MAX_DOC_BYTES: usize = 2_000_000;
 const BLOCK_SCHEMA: &str = include_str!("../../schemas/block.schema.json");
@@ -28,12 +29,16 @@ const SKILL_SIDECAR: &str = ".sieve-skill.json";
 const SKILL_FILES: &[(&str, &str)] = &[
     ("SKILL.md", include_str!("../../skills/sieve/SKILL.md")),
     (
-        "references/pr-comment.md",
-        include_str!("../../skills/sieve/references/pr-comment.md"),
+        "references/default-review-policy.md",
+        include_str!("../../skills/sieve/references/default-review-policy.md"),
     ),
     (
-        "scripts/visual-diff-to-blocks.mjs",
-        include_str!("../../skills/sieve/scripts/visual-diff-to-blocks.mjs"),
+        "references/review-policy-template.md",
+        include_str!("../../skills/sieve/references/review-policy-template.md"),
+    ),
+    (
+        "references/pr-comment.md",
+        include_str!("../../skills/sieve/references/pr-comment.md"),
     ),
 ];
 
@@ -68,6 +73,7 @@ enum Commands {
     Attach(AttachArgs),
     PrComment(ReviewId),
     Skill(SkillCommand),
+    Policy(PolicyCommand),
 }
 
 #[derive(Args)]
@@ -114,6 +120,8 @@ struct PublishArgs {
     allow_findings: Vec<String>,
     #[arg(long)]
     allow_unverified_diffs: bool,
+    #[arg(long = "review-warning")]
+    review_warnings: Vec<String>,
 }
 
 #[derive(Args)]
@@ -191,6 +199,24 @@ struct AttachArgs {
 struct SkillCommand {
     #[command(subcommand)]
     command: SkillSubcommand,
+}
+
+#[derive(Args)]
+struct PolicyCommand {
+    #[command(subcommand)]
+    command: PolicySubcommand,
+}
+
+#[derive(Subcommand)]
+enum PolicySubcommand {
+    Show,
+    Init(PolicyInitArgs),
+}
+
+#[derive(Args)]
+struct PolicyInitArgs {
+    #[arg(long)]
+    force: bool,
 }
 
 #[derive(Subcommand)]
@@ -329,6 +355,18 @@ fn run(cli: Cli, json_output: bool) -> Result<()> {
             }
             command => skill(command),
         },
+        Commands::Policy(args) => match args.command {
+            PolicySubcommand::Show => {
+                let policy = policy::discover();
+                if json_output {
+                    print_value(policy.show_json(), true);
+                } else {
+                    print!("{}", policy::show_human(&policy));
+                }
+                return Ok(());
+            }
+            PolicySubcommand::Init(args) => policy::init(args.force),
+        },
     }?;
     print_value(result, json_output);
     Ok(())
@@ -373,13 +411,16 @@ fn status(client: &ApiClient) -> Result<Value> {
     let live_schema = client.get("/api/agent/v1/block-schema").ok();
     let schema_drift = schema_drift_from_live(live_schema.as_ref());
     let skill = skill_status_for_defaults()?;
-    let warnings = status_warnings(&whoami, schema_drift, &skill);
+    let policy = policy::discover();
+    let mut warnings = status_warnings(&whoami, schema_drift, &skill);
+    warnings.extend(policy.warnings());
     Ok(json!({
         "host": client.host,
         "hasToken": client.token.is_some(),
         "whoami": whoami,
         "schemaDrift": schema_drift,
         "skill": skill,
+        "policy": policy.status_json(),
         "warnings": warnings,
     }))
 }
@@ -536,17 +577,16 @@ fn publish(client: &ApiClient, args: PublishArgs) -> Result<Value> {
         .with_context(|| format!("failed to read {}", args.manifest.display()))?;
     let mut manifest: Value = serde_json::from_str(&raw)?;
     let mut warnings = schema_drift_warnings(client);
+    let policy = policy::discover();
+    warnings.extend(policy.warnings());
+    for warning in args.review_warnings {
+        if warning.trim().is_empty() {
+            bail!("--review-warning requires a non-empty message");
+        }
+        insert_review_output_warning(&mut manifest, "review-warning", warning.trim().to_string())?;
+    }
     warnings.extend(expand_manifest(&mut manifest, args.allow_unverified_diffs)?);
     validate_manifest_content(&manifest)?;
-    validate_reviewer_focus(&manifest)?;
-    let quality_warnings = review_quality_warnings(&manifest);
-    if !args.dry_run && !quality_warnings.is_empty() {
-        bail!(
-            "review quality warnings blocked publish: {}",
-            quality_warnings.join("; ")
-        );
-    }
-    warnings.extend(quality_warnings);
     enforce_budgets(&manifest)?;
     let findings = redact_findings(&manifest);
     let blocked_findings = findings
@@ -663,10 +703,26 @@ fn session(client: &ApiClient, command: SessionSubcommand) -> Result<Value> {
 fn attach(client: &ApiClient, args: AttachArgs) -> Result<Value> {
     let data = fs::read(&args.file)?;
     if data.len() as u64 > MAX_ATTACHMENT_BYTES {
-        bail!("PNG exceeds {MAX_ATTACHMENT_BYTES} byte limit");
+        bail!(
+            "{} exceeds {MAX_ATTACHMENT_BYTES} byte PNG limit",
+            args.file.display()
+        );
     }
+    upload_png(client, data)
+}
+
+fn upload_png(client: &ApiClient, data: Vec<u8>) -> Result<Value> {
     let (width, height) = png_dimensions(&data)?;
     let sha256 = hex::encode(Sha256::digest(&data));
+    if let Some(existing) = client.get_optional(&format!("/api/attachments/by-hash/{sha256}"))? {
+        return Ok(json!({
+            "attachmentId": existing.get("id").cloned().unwrap_or(Value::Null),
+            "width": existing.get("width").cloned().unwrap_or(json!(width)),
+            "height": existing.get("height").cloned().unwrap_or(json!(height)),
+            "sha256": sha256,
+            "deduplicated": true,
+        }));
+    }
     let uploaded = client.post_png("/api/attachments", data)?;
     Ok(json!({
         "attachmentId": uploaded.get("id").cloned().unwrap_or(Value::Null),
@@ -1084,6 +1140,21 @@ impl ApiClient {
 
     fn get(&self, path: &str) -> Result<Value> {
         self.send(self.auth(self.client.get(self.url(path))))
+    }
+
+    fn get_optional(&self, path: &str) -> Result<Option<Value>> {
+        let response = self.auth(self.client.get(self.url(path))).send()?;
+        if response.status().as_u16() == 404 {
+            return Ok(None);
+        }
+        let status = response.status();
+        let text = response.text()?;
+        let value =
+            serde_json::from_str::<Value>(&text).unwrap_or_else(|_| json!({ "body": text }));
+        if !status.is_success() {
+            bail!("server returned {}: {}", status.as_u16(), value);
+        }
+        Ok(Some(value))
     }
 
     fn delete(&self, path: &str) -> Result<Value> {
@@ -1648,188 +1719,45 @@ fn validate_manifest_content(manifest: &Value) -> Result<()> {
     Ok(())
 }
 
-fn validate_reviewer_focus(manifest: &Value) -> Result<()> {
-    let Some(blocks) = manifest
-        .pointer("/content/blocks")
-        .and_then(Value::as_array)
-    else {
-        return Ok(());
-    };
-    for (index, block) in blocks.iter().enumerate() {
-        if !is_key_evidence_block(block)
-            || index
-                .checked_sub(1)
-                .and_then(|previous| blocks.get(previous))
-                .is_some_and(is_key_evidence_block)
-        {
-            continue;
-        }
-        let run_length = blocks[index..]
-            .iter()
-            .take_while(|candidate| is_key_evidence_block(candidate))
-            .count();
-        if run_length > 1
-            && !index
-                .checked_sub(1)
-                .and_then(|previous| blocks.get(previous))
-                .is_some_and(is_key_changes_section)
-        {
-            bail!(
-                "{run_length} consecutive key code evidence blocks need an explicit `Key changes` section"
-            );
-        }
-    }
-    for block in blocks {
-        let id = block.get("id").and_then(Value::as_str).unwrap_or("unknown");
-        let block_type = block.get("type").and_then(Value::as_str).unwrap_or("");
-        if id == "omitted-files"
-            || (block_type == "rich-text"
-                && block
-                    .pointer("/data/markdown")
-                    .and_then(Value::as_str)
-                    .is_some_and(|markdown| {
-                        let lower = markdown.to_ascii_lowercase();
-                        lower.contains("## omitted files")
-                            || lower.contains("## omitted from key diffs")
-                    }))
-        {
-            bail!(
-                "review block `{id}` repeats omitted files; keep the complete footprint in file-tree and remove omission prose"
-            );
-        }
-        if block_type != "diff" && block_type != "annotated-code" {
-            continue;
-        }
-        let filename = block
-            .pointer("/data/filename")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown");
-        let summary = block
-            .get("summary")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|summary| !summary.is_empty())
-            .ok_or_else(|| {
-                anyhow!("{block_type} block `{id}` needs a one-line reviewer-intent summary")
-            })?;
-        if is_placeholder_review_summary(summary, filename) {
-            bail!(
-                "{block_type} block `{id}` has generated summary `{summary}`; describe what changed and why it matters"
-            );
-        }
-        if block_type == "diff" {
-            let before = block
-                .pointer("/data/before")
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            let after = block
-                .pointer("/data/after")
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            if before.trim().is_empty() && !after.trim().is_empty() {
-                bail!(
-                    "added file `{filename}` is a one-sided diff; use annotated-code with focused annotations"
-                );
-            }
-        }
-    }
-    Ok(())
-}
-
-fn is_key_evidence_block(block: &Value) -> bool {
-    matches!(
-        block.get("type").and_then(Value::as_str),
-        Some("diff" | "annotated-code" | "diff-ref" | "annotated-code-ref")
-    )
-}
-
-fn is_key_changes_section(block: &Value) -> bool {
-    match block.get("type").and_then(Value::as_str) {
-        Some("section") => block
-            .pointer("/data/title")
-            .and_then(Value::as_str)
-            .is_some_and(|title| title.trim().eq_ignore_ascii_case("key changes")),
-        Some("rich-text") => block
-            .pointer("/data/markdown")
-            .and_then(Value::as_str)
-            .is_some_and(|markdown| markdown.trim().eq_ignore_ascii_case("## key changes")),
-        _ => false,
-    }
-}
-
-fn is_placeholder_review_summary(summary: &str, filename: &str) -> bool {
-    let lower = summary.trim().to_ascii_lowercase();
-    if lower == "key change" || lower.starts_with("replace with ") {
-        return true;
-    }
-    ["added", "modified", "removed", "renamed"]
+fn insert_review_output_warning(
+    manifest: &mut Value,
+    base_id: &str,
+    markdown: String,
+) -> Result<()> {
+    let blocks = manifest
+        .pointer_mut("/content/blocks")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| anyhow!("content.blocks must be an array"))?;
+    let existing_ids = blocks
         .iter()
-        .any(|status| lower == format!("{status} {}", filename.to_ascii_lowercase()))
-}
-
-fn review_quality_warnings(manifest: &Value) -> Vec<String> {
-    let Some(blocks) = manifest
-        .pointer("/content/blocks")
-        .and_then(Value::as_array)
-    else {
-        return vec![];
-    };
-    let mut warnings = Vec::new();
-    for block in blocks {
-        if block.get("type").and_then(Value::as_str) == Some("diff") {
-            let id = block.get("id").and_then(Value::as_str).unwrap_or("unknown");
-            let before_lines = block
-                .pointer("/data/before")
-                .and_then(Value::as_str)
-                .map(|text| text.lines().count())
-                .unwrap_or(0);
-            let after_lines = block
-                .pointer("/data/after")
-                .and_then(Value::as_str)
-                .map(|text| text.lines().count())
-                .unwrap_or(0);
-            let annotations = block
-                .pointer("/data/annotations")
-                .and_then(Value::as_array)
-                .map(Vec::len)
-                .unwrap_or(0);
-            if before_lines.max(after_lines) >= LARGE_DIFF_LINES && annotations == 0 {
-                warnings.push(format!(
-                    "large diff block `{id}` needs focused annotations for reviewer navigation"
-                ));
+        .filter_map(|block| block.get("id").and_then(Value::as_str))
+        .collect::<BTreeSet<_>>();
+    let id = (1..)
+        .map(|suffix| {
+            if suffix == 1 {
+                base_id.to_string()
+            } else {
+                format!("{base_id}-{suffix}")
             }
-        }
-        if block.get("type").and_then(Value::as_str) != Some("rich-text") {
-            continue;
-        }
-        let id = block.get("id").and_then(Value::as_str).unwrap_or("unknown");
-        let markdown = block
-            .pointer("/data/markdown")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let lower = markdown.to_ascii_lowercase();
-        if lower.contains("diff basis:") {
-            warnings.push(format!(
-                "review block `{id}` includes diff provenance already carried by review metadata"
-            ));
-        }
-        if lower.contains("## visual changes")
-            && (lower.contains("merge-base")
-                || lower.contains(" unchanged")
-                || lower.contains("darwin-")
-                || lower.contains("linux-"))
-        {
-            warnings.push(format!(
-                "review block `{id}` exposes screenshot-generation metadata; place image-diff blocks directly after the outcome"
-            ));
-        }
-        if lower.contains("first publish") || lower.contains("capture harness") {
-            warnings.push(format!(
-                "review block `{id}` narrates agent/capture process instead of reviewer-facing change context"
-            ));
-        }
-    }
-    warnings
+        })
+        .find(|candidate| !existing_ids.contains(candidate.as_str()))
+        .expect("an unused generated warning id");
+    let insert_at = blocks
+        .iter()
+        .position(|block| {
+            block.get("id").and_then(Value::as_str) == Some("summary")
+                && block.get("type").and_then(Value::as_str) == Some("rich-text")
+        })
+        .map_or(0, |index| index + 1);
+    blocks.insert(
+        insert_at,
+        json!({
+            "id": id,
+            "type": "callout",
+            "data": { "tone": "warning", "markdown": markdown }
+        }),
+    );
+    Ok(())
 }
 
 fn validate_document_invariants(document: &Value) -> Result<()> {
@@ -2708,13 +2636,13 @@ mod tests {
     #[test]
     fn renders_common_tty_outputs_as_human_text() {
         let status = render_human(&json!({
-            "host": "http://localhost:3000",
+            "host": "http://localhost:7919",
             "hasToken": true,
             "whoami": { "user": { "email": "agent@localhost" } },
             "schemaDrift": false,
             "warnings": ["token expires within 7 days"]
         }));
-        assert!(status.contains("Host: http://localhost:3000"));
+        assert!(status.contains("Host: http://localhost:7919"));
         assert!(status.contains("User: agent@localhost"));
         assert!(status.contains("Warning: token expires within 7 days"));
 
@@ -2762,7 +2690,7 @@ mod tests {
         let path = dir.path().join("config.json");
         env::set_var("SIEVE_CONFIG", &path);
         let mut config = Config::default();
-        config.set_token("http://localhost:3000", "sieve_test", Some("token-id"));
+        config.set_token("http://localhost:7919", "sieve_test", Some("token-id"));
         config.save().unwrap();
         assert_eq!(
             fs::metadata(&path).unwrap().permissions().mode() & 0o777,
@@ -3082,114 +3010,36 @@ mod tests {
     }
 
     #[test]
-    fn reviewer_focus_rejects_generated_context() {
-        let one_sided = json!({
-            "content": { "blocks": [{
-                "id": "added",
-                "type": "diff",
-                "summary": "Runs Axe over holder states",
-                "data": { "filename": "new.ts", "before": "", "after": "test();" }
-            }] }
-        });
-        assert!(validate_reviewer_focus(&one_sided)
-            .unwrap_err()
-            .to_string()
-            .contains("use annotated-code"));
-
-        let omitted = json!({
-            "content": { "blocks": [{
-                "id": "omitted-files",
-                "type": "rich-text",
-                "data": { "markdown": "## Omitted files\n- lockfile" }
-            }] }
-        });
-        assert!(validate_reviewer_focus(&omitted)
-            .unwrap_err()
-            .to_string()
-            .contains("file-tree"));
-
-        let generated_summary = json!({
-            "content": { "blocks": [{
-                "id": "holder",
-                "type": "diff",
-                "summary": "modified src/Holder.tsx",
-                "data": {
-                    "filename": "src/Holder.tsx",
-                    "before": "old",
-                    "after": "new"
-                }
-            }] }
-        });
-        assert!(validate_reviewer_focus(&generated_summary)
-            .unwrap_err()
-            .to_string()
-            .contains("describe what changed and why"));
-
-        let ungrouped = json!({
-            "content": { "blocks": [
-                {
-                    "id": "one",
-                    "type": "diff",
-                    "summary": "Changes the first behavior",
-                    "data": { "filename": "one.ts", "before": "old", "after": "new" }
-                },
-                {
-                    "id": "two",
-                    "type": "annotated-code",
-                    "summary": "Introduces the second behavior",
-                    "data": { "filename": "two.ts", "code": "export const two = true;" }
-                }
-            ] }
-        });
-        assert!(validate_reviewer_focus(&ungrouped)
-            .unwrap_err()
-            .to_string()
-            .contains("explicit `Key changes` section"));
-
-        let grouped = json!({
-            "content": { "blocks": [
-                { "id": "key-changes", "type": "section", "data": { "title": "Key changes" } },
-                ungrouped.pointer("/content/blocks/0").unwrap(),
-                ungrouped.pointer("/content/blocks/1").unwrap()
-            ] }
-        });
-        validate_reviewer_focus(&grouped).unwrap();
-    }
-
-    #[test]
-    fn warns_about_process_metadata_in_review_prose() {
-        let manifest = json!({
-            "content": { "blocks": [{
+    fn authored_review_warnings_are_visible_and_use_unique_ids() {
+        let mut manifest = json!({ "content": { "version": 1, "blocks": [
+            {
                 "id": "summary",
                 "type": "rich-text",
-                "data": {
-                    "markdown": "## Visual changes\n2 changed, 17 unchanged vs merge-base@abc on darwin-arm64.\n\nDiff basis: origin/master...HEAD. The first publish used a capture harness."
-                }
-            }] }
-        });
-        let warnings = review_quality_warnings(&manifest);
-        assert_eq!(warnings.len(), 3);
-    }
+                "data": { "markdown": "## Outcome\nReady for review." }
+            },
+            {
+                "id": "review-warning",
+                "type": "callout",
+                "data": { "tone": "info", "markdown": "An authored note." }
+            }
+        ] } });
+        insert_review_output_warning(
+            &mut manifest,
+            "review-warning",
+            "**Missing visual evidence.** Browser unavailable.".to_string(),
+        )
+        .unwrap();
 
-    #[test]
-    fn warns_about_large_unannotated_diffs() {
-        let manifest = json!({
-            "content": { "blocks": [{
-                "id": "large-diff",
-                "type": "diff",
-                "summary": "Changes a large policy surface",
-                "data": {
-                    "filename": "policy.ts",
-                    "before": "before",
-                    "after": (0..LARGE_DIFF_LINES).map(|index| format!("line {index}")).collect::<Vec<_>>().join("\n"),
-                    "annotations": []
-                }
-            }] }
-        });
+        let warning = manifest.pointer("/content/blocks/1").unwrap();
         assert_eq!(
-            review_quality_warnings(&manifest),
-            vec!["large diff block `large-diff` needs focused annotations for reviewer navigation"]
+            warning.get("id").and_then(Value::as_str),
+            Some("review-warning-2")
         );
+        assert_eq!(
+            warning.pointer("/data/tone").and_then(Value::as_str),
+            Some("warning")
+        );
+        validate_manifest_content(&manifest).unwrap();
     }
 
     fn read_block_fixture(name: &str) -> Value {

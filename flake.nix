@@ -43,6 +43,8 @@
         };
         devShells.default = pkgs.mkShell {
           packages = [
+            pkgs.nodejs_24
+            pkgs.corepack
             pkgs.cargo
             pkgs.rustc
             pkgs.rustfmt

@@ -309,6 +309,29 @@ fn full_agent_loop_against_test_server() {
     assert_eq!(attachment.get("width").and_then(Value::as_u64), Some(1));
     assert_eq!(attachment.get("height").and_then(Value::as_u64), Some(1));
 
+    write_manifest(&manifest_path, &idempotency_key, "v3");
+    json_command(
+        command()
+            .args([
+                "--host",
+                &server,
+                "publish",
+                "--manifest",
+                manifest_path.to_str().unwrap(),
+                "--review-warning",
+                "Visual comparison unavailable: repository capture command failed.",
+            ])
+            .env("SIEVE_CONFIG", &config_path),
+    );
+    let review_with_warning = json_command(
+        command()
+            .args(["--host", &server, "get", &review_id])
+            .env("SIEVE_CONFIG", &config_path),
+    );
+    assert!(review_with_warning
+        .to_string()
+        .contains("Visual comparison unavailable: repository capture command failed."));
+
     let fake_bin = config_dir.path().join("bin");
     fs::create_dir_all(&fake_bin).unwrap();
     let fake_gh = fake_bin.join("gh");
@@ -462,6 +485,21 @@ fn write_fake_gh(path: &std::path::Path, script: &str) {
 }
 
 fn write_manifest(path: &std::path::Path, idempotency_key: &str, version: &str) {
+    write_manifest_with_blocks(path, idempotency_key, version, vec![]);
+}
+
+fn write_manifest_with_blocks(
+    path: &std::path::Path,
+    idempotency_key: &str,
+    version: &str,
+    extra_blocks: Vec<Value>,
+) {
+    let mut blocks = vec![json!({
+        "id": "summary",
+        "type": "rich-text",
+        "data": { "markdown": format!("## Outcome\nCLI integration {version}.") }
+    })];
+    blocks.extend(extra_blocks);
     fs::write(
         path,
         serde_json::to_string_pretty(&json!({
@@ -472,13 +510,7 @@ fn write_manifest(path: &std::path::Path, idempotency_key: &str, version: &str) 
             "changeNote": version,
             "content": {
                 "version": 1,
-                "blocks": [{
-                    "id": "summary",
-                    "type": "rich-text",
-                    "data": {
-                        "markdown": format!("## Outcome\nCLI integration {version}.")
-                    }
-                }]
+                "blocks": blocks
             }
         }))
         .unwrap(),
