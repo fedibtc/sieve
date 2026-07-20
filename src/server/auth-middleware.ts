@@ -1,9 +1,9 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { getAuth } from "./auth";
 import { getDb } from "./db/client";
-import { user } from "./db/schema";
+import { account, user } from "./db/schema";
 import { isAllowedEmailDomain } from "./env";
 import { ensureUser } from "./services/users";
 
@@ -24,6 +24,24 @@ export async function getSession() {
   });
 }
 
+// GitHub users carry personal emails, so the domain check alone would eject
+// them. A linked github account implies they passed the sign-in allowlist;
+// allowlist removal cuts off the next sign-in, not sessions already open.
+async function isAuthorizedUser(sessionUser: { id: string; email: string }) {
+  if (isAllowedEmailDomain(sessionUser.email)) {
+    return true;
+  }
+  const db = await getDb();
+  const [linked] = await db
+    .select({ id: account.id })
+    .from(account)
+    .where(
+      and(eq(account.userId, sessionUser.id), eq(account.providerId, "github")),
+    )
+    .limit(1);
+  return Boolean(linked);
+}
+
 export async function requireSession() {
   const requestHeaders = await headers();
   if (isLocalhostBypassEnabled(requestHeaders)) {
@@ -41,7 +59,7 @@ export async function requireSession() {
   }
 
   const session = await getSession();
-  if (!session?.user || !isAllowedEmailDomain(session.user.email)) {
+  if (!session?.user || !(await isAuthorizedUser(session.user))) {
     redirect("/login");
   }
   return session;
@@ -89,7 +107,7 @@ export async function requireBearerUser(request: Request) {
     .limit(1);
 
   const isLocalDevOwner = owner?.id === "local-dev-user" && !process.env.VERCEL;
-  if (!owner || (!isLocalDevOwner && !isAllowedEmailDomain(owner.email))) {
+  if (!owner || (!isLocalDevOwner && !(await isAuthorizedUser(owner)))) {
     return null;
   }
 
@@ -114,7 +132,7 @@ export async function authenticateRequest(request: Request) {
 
   const auth = await getAuth();
   const session = await auth.api.getSession({ headers: request.headers });
-  if (!session?.user || !isAllowedEmailDomain(session.user.email)) {
+  if (!session?.user || !(await isAuthorizedUser(session.user))) {
     return null;
   }
 
