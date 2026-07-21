@@ -132,3 +132,11 @@ nix develop --command nix run nixpkgs#cargo-dist -- plan --tag v0.3.0
 ```
 
 The release workflow runs the reusable preflight checks, builds each configured OS/architecture target, creates checksums, and publishes the draft GitHub release only when every required job succeeds.
+
+## Acknowledgements
+
+Sieve was inspired in part by Builder.io's [Agent-Native Visual Recap](https://github.com/BuilderIO/agent-native).
+
+## License
+
+Sieve is available under the [MIT License](LICENSE).
