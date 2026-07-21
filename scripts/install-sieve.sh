@@ -48,7 +48,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 command -v gh >/dev/null 2>&1 || {
-  echo "gh is required to download private Sieve releases" >&2
+  echo "gh is required to download Sieve releases" >&2
   exit 1
 }
 

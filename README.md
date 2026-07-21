@@ -4,7 +4,7 @@ Sieve is a local-first review server and Rust CLI for structured agent review re
 
 ## Install The CLI
 
-Sieve releases are private GitHub releases. Authenticate `gh`, fetch the installer, and run it from any repository:
+Sieve ships as GitHub releases on this repository, downloaded with the `gh` CLI. Authenticate `gh`, fetch the installer, and run it from any repository:
 
 ```bash
 gh auth status
