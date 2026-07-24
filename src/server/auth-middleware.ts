@@ -39,6 +39,22 @@ async function isAuthorizedUser(sessionUser: { id: string; email: string }) {
 
 export async function requireSession() {
   const requestHeaders = await headers();
+  if (/^Bearer\s+.+/i.test(requestHeaders.get("authorization") ?? "")) {
+    const auth = await getAuth();
+    const bearerSession = await auth.api.getSession({
+      headers: requestHeaders,
+    });
+    const isLocalDevUser =
+      bearerSession?.user.id === "local-dev-user" && !process.env.VERCEL;
+    if (
+      !bearerSession?.user ||
+      (!isLocalDevUser && !(await isAuthorizedUser(bearerSession.user)))
+    ) {
+      redirect("/login");
+    }
+    return bearerSession;
+  }
+
   if (isLocalhostBypassEnabled(requestHeaders)) {
     return {
       user: localDevUser,

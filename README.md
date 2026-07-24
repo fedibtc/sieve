@@ -82,10 +82,11 @@ sieve skill install
 
 `sieve status` reports stale or missing installed skills and names the same fix.
 
-See `docs/connect.md` for the full agent setup. Go to `/settings/tokens`, mint a token, and use one of the generated snippets:
+See `docs/connect.md` for the full agent setup:
 
+- `sieve login` is the primary interactive path. It prints a browser verification URL and user code, then stores the approved `sieve_` API key with private permissions.
 - `sieve login --dev` to mint and store a localhost PAT for the CLI.
-- `export SIEVE_TOKEN=sieve_...` for the CLI or scripts against non-local hosts.
+- For headless agents and CI, mint a token at `/settings/tokens` and set `SIEVE_TOKEN=sieve_...`.
 - Deprecated `/api/mcp` snippets are still shown for migration only. New agent sessions should use the CLI.
 
 Tokens are Better Auth API keys with the `sieve_` prefix, shown once, and revocable from the settings page.

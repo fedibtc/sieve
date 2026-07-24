@@ -41,7 +41,16 @@ Use this skill when working in a Fedi repo branch that should be reviewed throug
    sieve login --dev
    ```
 
-5. For non-local hosts, use `SIEVE_TOKEN` or a stored CLI login token. Do not pass tokens on argv.
+5. For interactive use against a non-local host, run the device flow:
+
+   ```bash
+   sieve login
+   ```
+
+   Open the printed verification URL, enter the user code, and approve the
+   request from a GitHub-backed Sieve session. For headless agents and CI, mint
+   a token at `/settings/tokens` and provide it as `SIEVE_TOKEN`. Never pass
+   tokens on argv.
 
 ## Publish
 

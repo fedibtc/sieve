@@ -8,6 +8,7 @@ use std::{
     net::TcpListener,
     process::{Command, Output},
     thread,
+    time::{Duration, Instant},
 };
 use tempfile::tempdir;
 
@@ -49,6 +50,109 @@ fn retries_one_transient_server_error() {
         status.pointer("/whoami/user/id").and_then(Value::as_str),
         Some("retry-user")
     );
+    handle.join().unwrap();
+}
+
+#[test]
+fn device_login_stores_only_the_exchanged_api_key() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let server = format!("http://{}", listener.local_addr().unwrap());
+    let verification_uri = format!("{server}/device");
+    let handle = thread::spawn(move || {
+        respond(&listener, 200, device_code_response(&verification_uri, 0));
+        respond(&listener, 400, json!({ "error": "authorization_pending" }));
+        respond(
+            &listener,
+            200,
+            json!({
+                "access_token": "intermediate-session-token",
+                "token_type": "Bearer",
+                "expires_in": 3600,
+                "scope": "api_key"
+            }),
+        );
+        respond(
+            &listener,
+            201,
+            json!({
+                "token": {
+                    "id": "api-key-id",
+                    "key": "sieve_final-api-key"
+                }
+            }),
+        );
+    });
+
+    let config_dir = tempdir().unwrap();
+    let config_path = config_dir.path().join("config.json");
+    let output = command()
+        .args(["--host", &server, "--json", "login"])
+        .env("SIEVE_CONFIG", &config_path)
+        .output()
+        .unwrap();
+    assert_success(&output);
+    let result = serde_json::from_slice::<Value>(&output.stdout).unwrap();
+    assert_eq!(result["loggedIn"], true);
+    assert_eq!(result["userCode"], "ABCD2345");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("verificationUri"));
+
+    let stored = serde_json::from_str::<Value>(&fs::read_to_string(config_path).unwrap()).unwrap();
+    assert_eq!(
+        stored.pointer(&format!("/hosts/{}/token", escape_json_pointer(&server))),
+        Some(&json!("sieve_final-api-key"))
+    );
+    assert!(!stored.to_string().contains("intermediate-session-token"));
+    handle.join().unwrap();
+}
+
+#[test]
+fn device_login_reports_denial() {
+    assert_device_login_error("access_denied", "device authorization denied");
+}
+
+#[test]
+fn device_login_reports_expiry() {
+    assert_device_login_error("expired_token", "device authorization expired");
+}
+
+#[test]
+fn device_login_honors_slow_down_before_retrying() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let server = format!("http://{}", listener.local_addr().unwrap());
+    let verification_uri = format!("{server}/device");
+    let handle = thread::spawn(move || {
+        respond(&listener, 200, device_code_response(&verification_uri, 0));
+        respond(&listener, 400, json!({ "error": "slow_down" }));
+        respond(
+            &listener,
+            200,
+            json!({
+                "access_token": "slow-session-token",
+                "token_type": "Bearer",
+                "expires_in": 3600,
+                "scope": "api_key"
+            }),
+        );
+        respond(
+            &listener,
+            201,
+            json!({
+                "token": {
+                    "id": "slow-api-key-id",
+                    "key": "sieve_slow-final-key"
+                }
+            }),
+        );
+    });
+
+    let config_dir = tempdir().unwrap();
+    let started = Instant::now();
+    command()
+        .args(["--host", &server, "login"])
+        .env("SIEVE_CONFIG", config_dir.path().join("config.json"))
+        .assert()
+        .success();
+    assert!(started.elapsed() >= Duration::from_secs(5));
     handle.join().unwrap();
 }
 
@@ -473,6 +577,42 @@ fn respond(listener: &TcpListener, status: u16, body: Value) {
         text.len()
     )
     .unwrap();
+}
+
+fn device_code_response(verification_uri: &str, interval: u64) -> Value {
+    json!({
+        "device_code": "device-code",
+        "user_code": "ABCD2345",
+        "verification_uri": verification_uri,
+        "verification_uri_complete": format!("{verification_uri}?user_code=ABCD2345"),
+        "expires_in": 30,
+        "interval": interval
+    })
+}
+
+fn assert_device_login_error(error: &str, expected: &str) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let server = format!("http://{}", listener.local_addr().unwrap());
+    let verification_uri = format!("{server}/device");
+    let error = error.to_string();
+    let handle = thread::spawn(move || {
+        respond(&listener, 200, device_code_response(&verification_uri, 0));
+        respond(&listener, 400, json!({ "error": error }));
+    });
+
+    let config_dir = tempdir().unwrap();
+    let output = command()
+        .args(["--host", &server, "login"])
+        .env("SIEVE_CONFIG", config_dir.path().join("config.json"))
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains(expected));
+    handle.join().unwrap();
+}
+
+fn escape_json_pointer(value: &str) -> String {
+    value.replace('~', "~0").replace('/', "~1")
 }
 
 fn write_fake_gh(path: &std::path::Path, script: &str) {

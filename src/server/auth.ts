@@ -3,6 +3,7 @@ import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError } from "better-auth/api";
 import { nextCookies } from "better-auth/next-js";
+import { bearer, deviceAuthorization } from "better-auth/plugins";
 import { getDb } from "./db/client";
 import * as schema from "./db/schema";
 import { isAllowedGithubUser } from "./env";
@@ -61,6 +62,14 @@ async function createAuth() {
       },
     },
     plugins: [
+      deviceAuthorization({
+        verificationUri: "/device",
+        expiresIn: "15m",
+        interval: "5s",
+        userCodeLength: 8,
+        validateClient: (clientId) => clientId === "sieve-cli",
+      }),
+      bearer(),
       apiKey({
         defaultPrefix: "sieve_",
         keyExpiration: {

@@ -6,7 +6,7 @@ import { NextResponse } from "next/server";
 import { getAuth } from "@/server/auth";
 import { requireSession } from "@/server/auth-middleware";
 import { getDb } from "@/server/db/client";
-import { apikey } from "@/server/db/schema";
+import { apikey, session as authSession } from "@/server/db/schema";
 import { ensureUser } from "@/server/services/users";
 
 export const dynamic = "force-dynamic";
@@ -34,8 +34,8 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const session = await requireSession();
-  const user = await ensureUser(session.user);
+  const currentSession = await requireSession();
+  const user = await ensureUser(currentSession.user);
   const body = (await request.json().catch(() => ({}))) as {
     name?: string;
   };
@@ -57,6 +57,18 @@ export async function POST(request: Request) {
       }
       return createLocalBypassApiKey({ name, userId: user.id });
     });
+
+  if (/^Bearer\s+.+/i.test(request.headers.get("authorization") ?? "")) {
+    const db = await getDb();
+    const revoked = await db
+      .delete(authSession)
+      .where(eq(authSession.token, currentSession.session.token))
+      .returning();
+    if (revoked.length !== 1) {
+      await db.delete(apikey).where(eq(apikey.id, token.id));
+      throw new Error("Failed to revoke the device session");
+    }
+  }
 
   return NextResponse.json({ token }, { status: 201 });
 }

@@ -25,16 +25,29 @@ sieve status
 
 ## Non-Local Hosts
 
-Mint a token at `/settings/tokens`, then set it in the shell environment used by the agent:
+For interactive use, start the OAuth device flow:
+
+```bash
+sieve login
+sieve status
+```
+
+The CLI prints a verification URL and user code. Open the URL in a browser
+where you have a GitHub-backed Sieve session, approve the request, and return to
+the CLI. The short-lived device credential is exchanged for a `sieve_` API key,
+then revoked without being written to disk.
+
+The CLI defaults to `https://sieve.fedi.xyz`. `--host` overrides both that
+default and `SIEVE_HOST` for a single command. Do not pass tokens on argv; the
+CLI deliberately has no `--token` flag.
+
+For headless agents and CI, mint a token manually at `/settings/tokens`, then
+set it in the process environment:
 
 ```bash
 export SIEVE_TOKEN=sieve_...
 sieve status
 ```
-
-The CLI defaults to `https://sieve.fedi.xyz`. `--host` overrides both that
-default and `SIEVE_HOST` for a single command. Do not pass tokens on argv; the
-CLI deliberately has no `--token` flag.
 
 ## Production Authentication
 
