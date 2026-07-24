@@ -1,11 +1,13 @@
+import { getAuthCallbackURL } from "@/server/auth-redirect";
 import { GithubLoginButton } from "./sign-in-button";
 
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; next?: string }>;
 }) {
   const params = await searchParams;
+  const callbackURL = getAuthCallbackURL(params.next);
   const githubEnabled = Boolean(process.env.GITHUB_CLIENT_ID);
   return (
     <main className="flex min-h-screen items-center justify-center bg-background px-6">
@@ -25,7 +27,9 @@ export default async function LoginPage({
           </div>
         ) : null}
         <div className="mt-6 flex flex-col gap-3">
-          {githubEnabled ? <GithubLoginButton /> : null}
+          {githubEnabled ? (
+            <GithubLoginButton callbackURL={callbackURL} />
+          ) : null}
           {!githubEnabled ? (
             <p className="text-sm text-muted-foreground">
               No sign-in provider is configured. Set GITHUB_CLIENT_ID.

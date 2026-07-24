@@ -2,6 +2,41 @@ import { whoami } from "../helpers/api";
 import { expectHittable } from "../helpers/assertions";
 import { expect, test } from "../helpers/fixtures";
 
+test("logged-out device verification returns through GitHub sign-in", async ({
+  page,
+  request,
+}) => {
+  const userCode = "ABCD2345";
+  const deviceURL = `/device?user_code=${userCode}`;
+  const loggedOutResponse = await request.get(deviceURL, {
+    headers: { host: "sieve.test" },
+    maxRedirects: 0,
+  });
+
+  expect(loggedOutResponse.status()).toBe(307);
+  expect(loggedOutResponse.headers().location).toBe(
+    `/login?next=${encodeURIComponent(deviceURL)}`,
+  );
+
+  await page.route("**/api/auth/sign-in/social", async (route) => {
+    expect(route.request().postDataJSON()).toEqual({
+      provider: "github",
+      callbackURL: deviceURL,
+    });
+    await route.fulfill({ json: { url: deviceURL } });
+  });
+
+  await page.goto(loggedOutResponse.headers().location);
+  await expectHittable(
+    page.getByRole("button", { name: "Continue with GitHub" }),
+  );
+  await page.getByRole("button", { name: "Continue with GitHub" }).click();
+  await expect(page).toHaveURL(
+    (url) => `${url.pathname}${url.search}` === deviceURL,
+  );
+  await expect(page.getByLabel("User code")).toHaveValue(userCode);
+});
+
 test("device authorization approves, exchanges, and revokes a CLI key", async ({
   page,
   request,

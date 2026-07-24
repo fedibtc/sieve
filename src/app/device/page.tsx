@@ -11,8 +11,11 @@ export default async function DeviceAuthorizationPage({
     error?: string;
   }>;
 }) {
-  await requireSession();
   const params = await searchParams;
+  const returnTo = params.user_code
+    ? `/device?${new URLSearchParams({ user_code: params.user_code })}`
+    : "/device";
+  await requireSession(returnTo);
   const record = params.user_code
     ? await getDeviceAuthorization(params.user_code)
     : null;

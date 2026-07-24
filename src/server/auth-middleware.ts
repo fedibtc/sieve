@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { getAuth } from "./auth";
+import { getLoginURL } from "./auth-redirect";
 import { getDb } from "./db/client";
 import { account, user } from "./db/schema";
 import { isAllowedGithubUser } from "./env";
@@ -49,7 +50,8 @@ export async function isAuthorizedUser(sessionUser: {
   return linked.githubLogin ? isAllowedGithubUser(linked.githubLogin) : true;
 }
 
-export async function requireSession() {
+export async function requireSession(returnTo?: string) {
+  const loginURL = getLoginURL(returnTo);
   const requestHeaders = await headers();
   if (/^Bearer\s+.+/i.test(requestHeaders.get("authorization") ?? "")) {
     const auth = await getAuth();
@@ -62,7 +64,7 @@ export async function requireSession() {
       !bearerSession?.user ||
       (!isLocalDevUser && !(await isAuthorizedUser(bearerSession.user)))
     ) {
-      redirect("/login");
+      redirect(loginURL);
     }
     return bearerSession;
   }
@@ -83,7 +85,7 @@ export async function requireSession() {
 
   const session = await getSession();
   if (!session?.user || !(await isAuthorizedUser(session.user))) {
-    redirect("/login");
+    redirect(loginURL);
   }
   return session;
 }

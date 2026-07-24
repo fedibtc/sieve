@@ -2,11 +2,11 @@
 
 // The social sign-in endpoint is POST-only; it returns the provider
 // authorization URL instead of redirecting.
-async function signInWithGithub() {
+async function signInWithGithub(callbackURL: string) {
   const response = await fetch("/api/auth/sign-in/social", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ provider: "github", callbackURL: "/reviews" }),
+    body: JSON.stringify({ provider: "github", callbackURL }),
   });
   const data = (await response.json().catch(() => null)) as {
     url?: string;
@@ -14,18 +14,22 @@ async function signInWithGithub() {
   if (data?.url) {
     window.location.href = data.url;
   } else {
-    window.location.href = "/login?error=signin";
+    const params = new URLSearchParams({ error: "signin" });
+    if (callbackURL !== "/reviews") {
+      params.set("next", callbackURL);
+    }
+    window.location.href = `/login?${params}`;
   }
 }
 
 const buttonClassName =
   "inline-flex h-11 w-full items-center justify-center gap-3 rounded-md border bg-card px-4 text-sm font-medium transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
-export function GithubLoginButton() {
+export function GithubLoginButton({ callbackURL }: { callbackURL: string }) {
   return (
     <button
       type="button"
-      onClick={signInWithGithub}
+      onClick={() => signInWithGithub(callbackURL)}
       className={buttonClassName}
     >
       <svg
