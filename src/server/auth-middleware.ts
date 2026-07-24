@@ -4,7 +4,6 @@ import { redirect } from "next/navigation";
 import { getAuth } from "./auth";
 import { getDb } from "./db/client";
 import { account, user } from "./db/schema";
-import { isAllowedEmailDomain } from "./env";
 import { ensureUser } from "./services/users";
 
 const localDevUser = {
@@ -24,13 +23,9 @@ export async function getSession() {
   });
 }
 
-// GitHub users carry personal emails, so the domain check alone would eject
-// them. A linked github account implies they passed the sign-in allowlist;
+// A linked github account implies the user passed the sign-in allowlist;
 // allowlist removal cuts off the next sign-in, not sessions already open.
 async function isAuthorizedUser(sessionUser: { id: string; email: string }) {
-  if (isAllowedEmailDomain(sessionUser.email)) {
-    return true;
-  }
   const db = await getDb();
   const [linked] = await db
     .select({ id: account.id })

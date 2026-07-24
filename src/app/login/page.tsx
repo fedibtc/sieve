@@ -1,4 +1,4 @@
-import { GithubLoginButton, GoogleLoginButton } from "./sign-in-button";
+import { GithubLoginButton } from "./sign-in-button";
 
 export default async function LoginPage({
   searchParams,
@@ -6,7 +6,6 @@ export default async function LoginPage({
   searchParams: Promise<{ error?: string }>;
 }) {
   const params = await searchParams;
-  const googleEnabled = Boolean(process.env.GOOGLE_CLIENT_ID);
   const githubEnabled = Boolean(process.env.GITHUB_CLIENT_ID);
   return (
     <main className="flex min-h-screen items-center justify-center bg-background px-6">
@@ -17,8 +16,7 @@ export default async function LoginPage({
             Sign in to sieve
           </h1>
           <p className="mt-3 text-sm leading-6 text-muted-foreground">
-            Access is restricted to company accounts and allowlisted GitHub
-            users.
+            Access is restricted to allowlisted GitHub users.
           </p>
         </div>
         {params.error ? (
@@ -28,11 +26,9 @@ export default async function LoginPage({
         ) : null}
         <div className="mt-6 flex flex-col gap-3">
           {githubEnabled ? <GithubLoginButton /> : null}
-          {googleEnabled ? <GoogleLoginButton /> : null}
-          {!githubEnabled && !googleEnabled ? (
+          {!githubEnabled ? (
             <p className="text-sm text-muted-foreground">
-              No sign-in provider is configured. Set GITHUB_CLIENT_ID or
-              GOOGLE_CLIENT_ID.
+              No sign-in provider is configured. Set GITHUB_CLIENT_ID.
             </p>
           ) : null}
         </div>

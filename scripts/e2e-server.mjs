@@ -30,8 +30,8 @@ const env = {
   ...process.env,
   NODE_ENV: "production",
   DATABASE_URL: `pglite:${scratchPath}`,
-  AUTH_ALLOWED_DOMAINS: "localhost,127.0.0.1",
   BETTER_AUTH_SECRET: "e2e-localhost-secret-at-least-32-bytes",
+  GITHUB_CLIENT_ID: "e2e-github-client-id",
   NEXT_TELEMETRY_DISABLED: "1",
 };
 delete env.VERCEL;

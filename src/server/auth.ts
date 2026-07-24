@@ -5,17 +5,9 @@ import { APIError } from "better-auth/api";
 import { nextCookies } from "better-auth/next-js";
 import { getDb } from "./db/client";
 import * as schema from "./db/schema";
-import {
-  getAllowedDomains,
-  isAllowedEmailDomain,
-  isAllowedGithubUser,
-} from "./env";
+import { isAllowedGithubUser } from "./env";
 import { approveGithubEmail, takeGithubApproval } from "./github-login-gate";
 
-const googleClientId =
-  process.env.GOOGLE_CLIENT_ID ?? "missing-google-client-id";
-const googleClientSecret =
-  process.env.GOOGLE_CLIENT_SECRET ?? "missing-google-client-secret";
 const githubClientId =
   process.env.GITHUB_CLIENT_ID ?? "missing-github-client-id";
 const githubClientSecret =
@@ -50,37 +42,17 @@ async function createAuth() {
       "dev-secret-change-me-dev-secret-change-me",
     baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:7919",
     socialProviders: {
-      google: {
-        clientId: googleClientId,
-        clientSecret: googleClientSecret,
-        prompt: "select_account",
-        hd: getAllowedDomains()[0],
-      },
       github: {
         clientId: githubClientId,
         clientSecret: githubClientSecret,
-        mapProfileToUser: (profile) => {
-          if (!isAllowedGithubUser(profile.login)) {
-            throw new APIError("UNAUTHORIZED", {
-              message: "GitHub account is not allowlisted",
-            });
-          }
-          approveGithubEmail(profile.email);
-          return {};
-        },
+        mapProfileToUser: authorizeGithubProfile,
       },
     },
     databaseHooks: {
       user: {
         create: {
           before: async (user) => {
-            if (!user.emailVerified) {
-              return false;
-            }
-            if (
-              !isAllowedEmailDomain(user.email) &&
-              !takeGithubApproval(user.email)
-            ) {
+            if (!user.emailVerified || !takeGithubApproval(user.email)) {
               return false;
             }
             return { data: user };
@@ -102,6 +74,19 @@ async function createAuth() {
       nextCookies(),
     ],
   });
+}
+
+export function authorizeGithubProfile(profile: {
+  login: string;
+  email?: string | null;
+}) {
+  if (!isAllowedGithubUser(profile.login)) {
+    throw new APIError("UNAUTHORIZED", {
+      message: "GitHub account is not allowlisted",
+    });
+  }
+  approveGithubEmail(profile.email);
+  return {};
 }
 
 export type Auth = Awaited<ReturnType<typeof getAuth>>;
