@@ -15,25 +15,26 @@ describe("github login gate", () => {
   });
 
   it("consumes an approval exactly once, case-insensitively", () => {
-    approveGithubEmail("Dev@Example.com");
+    approveGithubEmail("Dev@Example.com", "GitHubUser");
 
-    expect(takeGithubApproval("dev@example.com")).toBe(true);
-    expect(takeGithubApproval("dev@example.com")).toBe(false);
+    expect(takeGithubApproval("dev@example.com")).toBe("githubuser");
+    expect(takeGithubApproval("dev@example.com")).toBeNull();
   });
 
   it("rejects unapproved and missing emails", () => {
-    expect(takeGithubApproval("nobody@example.com")).toBe(false);
-    expect(takeGithubApproval(null)).toBe(false);
-    approveGithubEmail(null);
-    expect(takeGithubApproval(null)).toBe(false);
+    expect(takeGithubApproval("nobody@example.com")).toBeNull();
+    expect(takeGithubApproval(null)).toBeNull();
+    approveGithubEmail(null, "github-user");
+    approveGithubEmail("dev@example.com", null);
+    expect(takeGithubApproval(null)).toBeNull();
   });
 
   it("expires approvals after the ttl", () => {
     vi.useFakeTimers();
-    approveGithubEmail("dev@example.com");
+    approveGithubEmail("dev@example.com", "github-user");
 
     vi.advanceTimersByTime(61_000);
 
-    expect(takeGithubApproval("dev@example.com")).toBe(false);
+    expect(takeGithubApproval("dev@example.com")).toBeNull();
   });
 });

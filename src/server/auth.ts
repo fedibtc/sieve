@@ -4,6 +4,7 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError } from "better-auth/api";
 import { nextCookies } from "better-auth/next-js";
 import { bearer, deviceAuthorization } from "better-auth/plugins";
+import { eq } from "drizzle-orm";
 import { getDb } from "./db/client";
 import * as schema from "./db/schema";
 import { isAllowedGithubUser } from "./env";
@@ -42,21 +43,31 @@ async function createAuth() {
       process.env.BETTER_AUTH_SECRET ??
       "dev-secret-change-me-dev-secret-change-me",
     baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:7919",
+    user: {
+      additionalFields: {
+        githubLogin: {
+          type: "string",
+          required: false,
+          input: false,
+        },
+      },
+    },
     socialProviders: {
       github: {
         clientId: githubClientId,
         clientSecret: githubClientSecret,
-        mapProfileToUser: authorizeGithubProfile,
+        mapProfileToUser: mapGithubProfileToUser,
       },
     },
     databaseHooks: {
       user: {
         create: {
           before: async (user) => {
-            if (!user.emailVerified || !takeGithubApproval(user.email)) {
+            const githubLogin = takeGithubApproval(user.email);
+            if (!user.emailVerified || !githubLogin) {
               return false;
             }
-            return { data: user };
+            return { data: { ...user, githubLogin } };
           },
         },
       },
@@ -94,7 +105,22 @@ export function authorizeGithubProfile(profile: {
       message: "GitHub account is not allowlisted",
     });
   }
-  approveGithubEmail(profile.email);
+  approveGithubEmail(profile.email, profile.login);
+  return profile.login.toLowerCase();
+}
+
+export async function mapGithubProfileToUser(profile: {
+  login: string;
+  email?: string | null;
+}) {
+  const githubLogin = authorizeGithubProfile(profile);
+  if (profile.email) {
+    const db = await getDb();
+    await db
+      .update(schema.user)
+      .set({ githubLogin, updatedAt: new Date() })
+      .where(eq(schema.user.email, profile.email.toLowerCase()));
+  }
   return {};
 }
 

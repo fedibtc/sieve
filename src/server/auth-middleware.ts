@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { getAuth } from "./auth";
 import { getDb } from "./db/client";
 import { account, user } from "./db/schema";
+import { isAllowedGithubUser } from "./env";
 import { ensureUser } from "./services/users";
 
 const localDevUser = {
@@ -23,18 +24,29 @@ export async function getSession() {
   });
 }
 
-// A linked github account implies the user passed the sign-in allowlist;
-// allowlist removal cuts off the next sign-in, not sessions already open.
-async function isAuthorizedUser(sessionUser: { id: string; email: string }) {
+// Existing linked accounts without a backfilled login remain authorized until
+// their next sign-in. Once populated, allowlist removal takes effect here for
+// both sessions and API keys on their next request.
+export async function isAuthorizedUser(sessionUser: {
+  id: string;
+  email: string;
+}) {
   const db = await getDb();
   const [linked] = await db
-    .select({ id: account.id })
+    .select({
+      id: account.id,
+      githubLogin: user.githubLogin,
+    })
     .from(account)
+    .innerJoin(user, eq(user.id, account.userId))
     .where(
       and(eq(account.userId, sessionUser.id), eq(account.providerId, "github")),
     )
     .limit(1);
-  return Boolean(linked);
+  if (!linked) {
+    return false;
+  }
+  return linked.githubLogin ? isAllowedGithubUser(linked.githubLogin) : true;
 }
 
 export async function requireSession() {
