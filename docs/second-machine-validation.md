@@ -22,7 +22,7 @@ For a deployed Sieve host:
 
 ```bash
 export SIEVE_TOKEN=sieve_...
-nix run github:<owner>/<repo>#sieve -- --host https://sieve.example.com status
+nix run github:<owner>/<repo>#sieve -- status
 ```
 
 For a local checkout copied or cloned onto the second machine:

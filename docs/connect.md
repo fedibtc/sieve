@@ -8,7 +8,8 @@ Localhost intentionally supports tokenless agent requests for development:
 
 ```bash
 sieve skill install
-sieve --host http://localhost:7919 status
+export SIEVE_HOST=http://localhost:7919
+sieve status
 ```
 
 The skill is embedded in the CLI. Run `sieve skill install` once per machine, and rerun it whenever `sieve status` reports the installed skill as missing or stale.
@@ -16,8 +17,8 @@ The skill is embedded in the CLI. Run `sieve skill install` once per machine, an
 To exercise the bearer-token path locally without SSO:
 
 ```bash
-sieve --host http://localhost:7919 login --dev
-sieve --host http://localhost:7919 status
+sieve login --dev
+sieve status
 ```
 
 `login --dev` mints a real `sieve_` API key through `/api/tokens` and stores it in the CLI config file with private permissions.
@@ -28,10 +29,24 @@ Mint a token at `/settings/tokens`, then set it in the shell environment used by
 
 ```bash
 export SIEVE_TOKEN=sieve_...
-sieve --host https://sieve.example.com status
+sieve status
 ```
 
-Do not pass tokens on argv. The CLI deliberately has no `--token` flag.
+The CLI defaults to `https://sieve.fedi.xyz`. `--host` overrides both that
+default and `SIEVE_HOST` for a single command. Do not pass tokens on argv; the
+CLI deliberately has no `--token` flag.
+
+## Production Authentication
+
+The production domain must remain publicly reachable at Vercel's deployment
+protection layer. Sieve's browser routes enforce a Better Auth session in the
+application (production currently offers GitHub login), while `/api/agent/v1`,
+`/api/attachments`, and the deprecated `/api/mcp` route enforce `sieve_` bearer
+tokens in the application. Vercel Authentication is currently disabled for the
+project. If it is enabled later, use Vercel Standard Protection so preview and
+generated deployment URLs are protected while the custom production domain
+remains public; protecting all production requests would intercept CLI calls
+before Sieve can validate their tokens.
 
 ## Publishing Flow
 
