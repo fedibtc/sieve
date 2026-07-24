@@ -24,10 +24,14 @@ In a repo whose dev shell includes Sieve:
 ```bash
 nix develop
 sieve skill install
+export SIEVE_TOKEN=sieve_...
 sieve status
 ```
 
-Against a local Sieve server, `sieve status` works without a token because the local-dev auth bypass is intentional. For non-local hosts, mint a token in Sieve at `/settings/tokens`, export `SIEVE_TOKEN`, and pass `--host`.
+The CLI defaults to `https://sieve.fedi.xyz`. Mint a token in Sieve at
+`/settings/tokens` and export it as `SIEVE_TOKEN`. For local development, set
+`SIEVE_HOST=http://localhost:7919` or pass `--host`; localhost intentionally
+supports tokenless requests.
 
 See `docs/connect.md` for agent setup and `docs/fedi-dev-shell.md` for the fedi dev-shell integration shape.
 
@@ -68,7 +72,7 @@ nix build .#sieve
 nix run .#sieve -- status
 ```
 
-The `fedi` dev shell can expose this package directly. Repositories without Nix, including `credential-app`, should use the release installer. In either case, `sieve status` works against localhost without a token because the local-dev auth bypass is intentional.
+The `fedi` dev shell can expose this package directly. Repositories without Nix, including `credential-app`, should use the release installer. The CLI targets `https://sieve.fedi.xyz` by default. Set `SIEVE_HOST=http://localhost:7919` while developing against a local server; localhost works without a token because the local-dev auth bypass is intentional.
 
 Install or refresh the bundled agent skill once per machine:
 

@@ -27,7 +27,15 @@ Use this skill when working in a Fedi repo branch that should be reviewed throug
    sieve policy show
    ```
 
-4. Localhost can use the sanctioned dev auth bypass with no token. To exercise the bearer path locally, run:
+4. The CLI defaults to `https://sieve.fedi.xyz`. For local development, set
+   `SIEVE_HOST`; localhost can use the sanctioned dev auth bypass with no token:
+
+   ```bash
+   export SIEVE_HOST=http://localhost:7919
+   sieve status
+   ```
+
+   To exercise the bearer path locally, run:
 
    ```bash
    sieve login --dev

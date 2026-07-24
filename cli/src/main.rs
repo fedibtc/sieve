@@ -16,7 +16,7 @@ use std::{
 
 mod policy;
 
-const DEFAULT_HOST: &str = "http://localhost:7919";
+const DEFAULT_HOST: &str = "https://sieve.fedi.xyz";
 const MAX_ATTACHMENT_BYTES: u64 = 2_000_000;
 const MAX_KEY_DIFFS: usize = 5;
 const MAX_DIFF_LINES: usize = 150;
@@ -45,7 +45,12 @@ const SKILL_FILES: &[(&str, &str)] = &[
 #[derive(Parser)]
 #[command(name = "sieve", version, about = "Sieve agent transport")]
 struct Cli {
-    #[arg(long, global = true, default_value = DEFAULT_HOST)]
+    #[arg(
+        long,
+        global = true,
+        env = "SIEVE_HOST",
+        default_value = DEFAULT_HOST
+    )]
     host: String,
     #[arg(long, global = true)]
     json: bool,
@@ -2404,6 +2409,31 @@ mod tests {
     use std::sync::Mutex;
 
     static CWD_LOCK: Mutex<()> = Mutex::new(());
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn resolves_production_and_development_hosts() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let original = env::var_os("SIEVE_HOST");
+        env::remove_var("SIEVE_HOST");
+
+        let default = Cli::try_parse_from(["sieve", "status"]).unwrap();
+        assert_eq!(default.host, DEFAULT_HOST);
+
+        env::set_var("SIEVE_HOST", "http://localhost:7919");
+        let local = Cli::try_parse_from(["sieve", "status"]).unwrap();
+        assert_eq!(local.host, "http://localhost:7919");
+
+        let explicit =
+            Cli::try_parse_from(["sieve", "--host", "http://127.0.0.1:3000", "status"]).unwrap();
+        assert_eq!(explicit.host, "http://127.0.0.1:3000");
+
+        if let Some(value) = original {
+            env::set_var("SIEVE_HOST", value);
+        } else {
+            env::remove_var("SIEVE_HOST");
+        }
+    }
 
     #[test]
     fn detects_png_dimensions() {
