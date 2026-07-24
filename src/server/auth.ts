@@ -3,19 +3,13 @@ import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError } from "better-auth/api";
 import { nextCookies } from "better-auth/next-js";
+import { bearer, deviceAuthorization } from "better-auth/plugins";
+import { eq } from "drizzle-orm";
 import { getDb } from "./db/client";
 import * as schema from "./db/schema";
-import {
-  getAllowedDomains,
-  isAllowedEmailDomain,
-  isAllowedGithubUser,
-} from "./env";
+import { isAllowedGithubUser } from "./env";
 import { approveGithubEmail, takeGithubApproval } from "./github-login-gate";
 
-const googleClientId =
-  process.env.GOOGLE_CLIENT_ID ?? "missing-google-client-id";
-const googleClientSecret =
-  process.env.GOOGLE_CLIENT_SECRET ?? "missing-google-client-secret";
 const githubClientId =
   process.env.GITHUB_CLIENT_ID ?? "missing-github-client-id";
 const githubClientSecret =
@@ -49,46 +43,44 @@ async function createAuth() {
       process.env.BETTER_AUTH_SECRET ??
       "dev-secret-change-me-dev-secret-change-me",
     baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:7919",
-    socialProviders: {
-      google: {
-        clientId: googleClientId,
-        clientSecret: googleClientSecret,
-        prompt: "select_account",
-        hd: getAllowedDomains()[0],
+    user: {
+      additionalFields: {
+        githubLogin: {
+          type: "string",
+          required: false,
+          input: false,
+        },
       },
+    },
+    socialProviders: {
       github: {
         clientId: githubClientId,
         clientSecret: githubClientSecret,
-        mapProfileToUser: (profile) => {
-          if (!isAllowedGithubUser(profile.login)) {
-            throw new APIError("UNAUTHORIZED", {
-              message: "GitHub account is not allowlisted",
-            });
-          }
-          approveGithubEmail(profile.email);
-          return {};
-        },
+        mapProfileToUser: mapGithubProfileToUser,
       },
     },
     databaseHooks: {
       user: {
         create: {
           before: async (user) => {
-            if (!user.emailVerified) {
+            const githubLogin = takeGithubApproval(user.email);
+            if (!user.emailVerified || !githubLogin) {
               return false;
             }
-            if (
-              !isAllowedEmailDomain(user.email) &&
-              !takeGithubApproval(user.email)
-            ) {
-              return false;
-            }
-            return { data: user };
+            return { data: { ...user, githubLogin } };
           },
         },
       },
     },
     plugins: [
+      deviceAuthorization({
+        verificationUri: "/device",
+        expiresIn: "15m",
+        interval: "5s",
+        userCodeLength: 8,
+        validateClient: (clientId) => clientId === "sieve-cli",
+      }),
+      bearer(),
       apiKey({
         defaultPrefix: "sieve_",
         keyExpiration: {
@@ -102,6 +94,34 @@ async function createAuth() {
       nextCookies(),
     ],
   });
+}
+
+export function authorizeGithubProfile(profile: {
+  login: string;
+  email?: string | null;
+}) {
+  if (!isAllowedGithubUser(profile.login)) {
+    throw new APIError("UNAUTHORIZED", {
+      message: "GitHub account is not allowlisted",
+    });
+  }
+  approveGithubEmail(profile.email, profile.login);
+  return profile.login.toLowerCase();
+}
+
+export async function mapGithubProfileToUser(profile: {
+  login: string;
+  email?: string | null;
+}) {
+  const githubLogin = authorizeGithubProfile(profile);
+  if (profile.email) {
+    const db = await getDb();
+    await db
+      .update(schema.user)
+      .set({ githubLogin, updatedAt: new Date() })
+      .where(eq(schema.user.email, profile.email.toLowerCase()));
+  }
+  return {};
 }
 
 export type Auth = Awaited<ReturnType<typeof getAuth>>;

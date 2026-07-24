@@ -22,8 +22,11 @@ test("app shell navigation, breadcrumb, PR link, login, and 404 render", async (
   await page.goto("/login?error=oauth");
   await expect(page.getByRole("heading", { name: /sign in/i })).toBeVisible();
   await expectHittable(
-    page.getByRole("button", { name: "Continue with Google" }),
+    page.getByRole("button", { name: "Continue with GitHub" }),
   );
+  await expect(
+    page.getByRole("button", { name: "Continue with Google" }),
+  ).toHaveCount(0);
   await expect(page.getByText(/sign-in failed/i)).toBeVisible();
 
   const missing = await page.goto("/reviews/does-not-exist");

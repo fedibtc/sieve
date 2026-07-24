@@ -2,9 +2,10 @@ import { and, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { getAuth } from "./auth";
+import { getLoginURL } from "./auth-redirect";
 import { getDb } from "./db/client";
 import { account, user } from "./db/schema";
-import { isAllowedEmailDomain } from "./env";
+import { isAllowedGithubUser } from "./env";
 import { ensureUser } from "./services/users";
 
 const localDevUser = {
@@ -17,33 +18,55 @@ const localDevUser = {
   updatedAt: new Date(0),
 };
 
-export async function getSession() {
+export async function getSession(requestHeaders?: Headers) {
   const auth = await getAuth();
   return auth.api.getSession({
-    headers: await headers(),
+    headers: requestHeaders ?? (await headers()),
   });
 }
 
-// GitHub users carry personal emails, so the domain check alone would eject
-// them. A linked github account implies they passed the sign-in allowlist;
-// allowlist removal cuts off the next sign-in, not sessions already open.
-async function isAuthorizedUser(sessionUser: { id: string; email: string }) {
-  if (isAllowedEmailDomain(sessionUser.email)) {
-    return true;
-  }
+// Existing linked accounts without a backfilled login remain authorized until
+// their next sign-in. Once populated, allowlist removal takes effect here for
+// both sessions and API keys on their next request.
+export async function isAuthorizedUser(sessionUser: {
+  id: string;
+  email: string;
+}) {
   const db = await getDb();
   const [linked] = await db
-    .select({ id: account.id })
+    .select({
+      id: account.id,
+      githubLogin: user.githubLogin,
+    })
     .from(account)
+    .innerJoin(user, eq(user.id, account.userId))
     .where(
       and(eq(account.userId, sessionUser.id), eq(account.providerId, "github")),
     )
     .limit(1);
-  return Boolean(linked);
+  if (!linked) {
+    return false;
+  }
+  return linked.githubLogin ? isAllowedGithubUser(linked.githubLogin) : true;
 }
 
-export async function requireSession() {
-  const requestHeaders = await headers();
+export async function getAuthorizedSession(requestHeaders: Headers) {
+  if (/^Bearer\s+.+/i.test(requestHeaders.get("authorization") ?? "")) {
+    const auth = await getAuth();
+    const bearerSession = await auth.api.getSession({
+      headers: requestHeaders,
+    });
+    const isLocalDevUser =
+      bearerSession?.user.id === "local-dev-user" && !process.env.VERCEL;
+    if (
+      !bearerSession?.user ||
+      (!isLocalDevUser && !(await isAuthorizedUser(bearerSession.user)))
+    ) {
+      return null;
+    }
+    return bearerSession;
+  }
+
   if (isLocalhostBypassEnabled(requestHeaders)) {
     return {
       user: localDevUser,
@@ -58,9 +81,17 @@ export async function requireSession() {
     };
   }
 
-  const session = await getSession();
+  const session = await getSession(requestHeaders);
   if (!session?.user || !(await isAuthorizedUser(session.user))) {
-    redirect("/login");
+    return null;
+  }
+  return session;
+}
+
+export async function requireSession(returnTo?: string) {
+  const session = await getAuthorizedSession(await headers());
+  if (!session) {
+    redirect(getLoginURL(returnTo));
   }
   return session;
 }

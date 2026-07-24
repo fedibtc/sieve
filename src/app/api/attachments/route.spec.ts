@@ -10,7 +10,6 @@ import { POST } from "./route";
 describe("attachment routes", () => {
   beforeEach(() => {
     process.env.DATABASE_URL = `pglite:memory://attachment-routes-${crypto.randomUUID()}`;
-    process.env.AUTH_ALLOWED_DOMAINS = "localhost";
     resetDbForTests();
     resetAuthForTests();
   });

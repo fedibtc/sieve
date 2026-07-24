@@ -2,7 +2,7 @@ import { defaultKeyHasher } from "@better-auth/api-key";
 import { beforeEach, describe, expect, it } from "vitest";
 import { resetAuthForTests } from "@/server/auth";
 import { getDb, resetDbForTests } from "@/server/db/client";
-import { apikey } from "@/server/db/schema";
+import { account, apikey } from "@/server/db/schema";
 import { ensureUser } from "@/server/services/users";
 import { POST as replyToComment } from "./reviews/[id]/comments/[commentId]/replies/route";
 import { POST as resolveComment } from "./reviews/[id]/comments/[commentId]/resolve/route";
@@ -19,7 +19,6 @@ import { GET as whoami } from "./whoami/route";
 describe("agent REST routes", () => {
   beforeEach(() => {
     process.env.DATABASE_URL = `pglite:memory://agent-routes-${crypto.randomUUID()}`;
-    process.env.AUTH_ALLOWED_DOMAINS = "localhost";
     delete process.env.VERCEL;
     resetDbForTests();
     resetAuthForTests();
@@ -248,6 +247,12 @@ async function createApiKey(input?: {
     emailVerified: true,
   });
   const db = await getDb();
+  await db.insert(account).values({
+    id: `${input?.id ?? "agent-route-key"}-github`,
+    accountId: "agent-github",
+    providerId: "github",
+    userId: user.id,
+  });
   await db.insert(apikey).values({
     id: input?.id ?? "agent-route-key",
     name: "Agent route key",

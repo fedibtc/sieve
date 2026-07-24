@@ -55,6 +55,7 @@ export const user = pgTable("user", {
   email: text("email").notNull().unique(),
   emailVerified: boolean("email_verified").notNull().default(false),
   image: text("image"),
+  githubLogin: text("github_login"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -162,6 +163,29 @@ export const apikey = pgTable(
   (table) => [
     index("apikey_reference_id_idx").on(table.referenceId),
     uniqueIndex("apikey_key_idx").on(table.key),
+  ],
+);
+
+export const deviceCode = pgTable(
+  "device_code",
+  {
+    id: text("id").primaryKey(),
+    deviceCode: text("device_code").notNull(),
+    userCode: text("user_code").notNull(),
+    userId: text("user_id").references(() => user.id, {
+      onDelete: "cascade",
+    }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    status: text("status").notNull(),
+    lastPolledAt: timestamp("last_polled_at", { withTimezone: true }),
+    pollingInterval: integer("polling_interval"),
+    clientId: text("client_id"),
+    scope: text("scope"),
+  },
+  (table) => [
+    uniqueIndex("device_code_device_code_idx").on(table.deviceCode),
+    uniqueIndex("device_code_user_code_idx").on(table.userCode),
+    index("device_code_user_id_idx").on(table.userId),
   ],
 );
 

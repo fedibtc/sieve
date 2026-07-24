@@ -3,23 +3,35 @@
 // the email here and the hook consumes that approval within the same request.
 const APPROVAL_TTL_MS = 60_000;
 
-const approvals = new Map<string, number>();
+const approvals = new Map<
+  string,
+  {
+    expiresAt: number;
+    login: string;
+  }
+>();
 
-export function approveGithubEmail(email: string | null | undefined) {
-  if (!email) {
+export function approveGithubEmail(
+  email: string | null | undefined,
+  login: string | null | undefined,
+) {
+  if (!email || !login) {
     return;
   }
-  approvals.set(email.toLowerCase(), Date.now() + APPROVAL_TTL_MS);
+  approvals.set(email.toLowerCase(), {
+    expiresAt: Date.now() + APPROVAL_TTL_MS,
+    login: login.toLowerCase(),
+  });
 }
 
 export function takeGithubApproval(email: string | null | undefined) {
   if (!email) {
-    return false;
+    return null;
   }
   const key = email.toLowerCase();
-  const expiresAt = approvals.get(key);
+  const approval = approvals.get(key);
   approvals.delete(key);
-  return Boolean(expiresAt && expiresAt > Date.now());
+  return approval && approval.expiresAt > Date.now() ? approval.login : null;
 }
 
 export function resetGithubApprovalsForTests() {

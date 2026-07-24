@@ -12,6 +12,8 @@ use std::{
     io::{self, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    thread,
+    time::{Duration as StdDuration, Instant},
 };
 
 mod policy;
@@ -26,6 +28,8 @@ const BLOCK_SCHEMA: &str = include_str!("../../schemas/block.schema.json");
 const SKILL_NAME: &str = "sieve";
 const LEGACY_SKILL_NAME: &str = "fedi-review";
 const SKILL_SIDECAR: &str = ".sieve-skill.json";
+const DEVICE_CLIENT_ID: &str = "sieve-cli";
+const DEVICE_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:device_code";
 const SKILL_FILES: &[(&str, &str)] = &[
     ("SKILL.md", include_str!("../../skills/sieve/SKILL.md")),
     (
@@ -324,7 +328,7 @@ fn run(cli: Cli, json_output: bool) -> Result<()> {
     let mut config = Config::load()?;
     let client = ApiClient::new(host.clone(), config.token_for(&host));
     let result = match cli.command {
-        Commands::Login(args) => login(&client, &mut config, &host, args),
+        Commands::Login(args) => login(&client, &mut config, &host, args, json_output),
         Commands::Logout(_) => logout(&client, &mut config, &host),
         Commands::Status => status(&client),
         Commands::Scaffold(args) => scaffold(args),
@@ -377,25 +381,147 @@ fn run(cli: Cli, json_output: bool) -> Result<()> {
     Ok(())
 }
 
-fn login(client: &ApiClient, config: &mut Config, host: &str, args: LoginArgs) -> Result<Value> {
-    if !args.dev {
-        bail!(
-            "auth: device flow not yet enabled (pending org auth decision). When enabled, this command will print a verification URL and user code, then poll for approval."
-        );
-    }
-    if !is_local_host(host) {
-        bail!("login --dev only works against localhost");
+fn login(
+    client: &ApiClient,
+    config: &mut Config,
+    host: &str,
+    args: LoginArgs,
+    json_output: bool,
+) -> Result<Value> {
+    if args.dev {
+        if !is_local_host(host) {
+            bail!("login --dev only works against localhost");
+        }
+        let value = client.post_public("/api/tokens", json!({ "name": "sieve cli" }))?;
+        return store_api_key(config, host, value, None);
     }
 
-    let value = client.post_public("/api/tokens", json!({ "name": "sieve cli" }))?;
+    let authorization = client.post_public(
+        "/api/auth/device/code",
+        json!({
+            "client_id": DEVICE_CLIENT_ID,
+            "scope": "api_key",
+        }),
+    )?;
+    let device_code = required_string(&authorization, "/device_code")?;
+    let user_code = required_string(&authorization, "/user_code")?;
+    let verification_uri = required_string(&authorization, "/verification_uri")?;
+    let verification_uri_complete = required_string(&authorization, "/verification_uri_complete")?;
+    let expires_in = authorization
+        .get("expires_in")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| anyhow!("device authorization response did not include expires_in"))?;
+    let mut interval = authorization
+        .get("interval")
+        .and_then(Value::as_u64)
+        .unwrap_or(5);
+
+    emit_device_prompt(
+        verification_uri,
+        verification_uri_complete,
+        user_code,
+        json_output,
+    )?;
+
+    let deadline = Instant::now() + StdDuration::from_secs(expires_in);
+    let access_token = loop {
+        if Instant::now() >= deadline {
+            bail!("auth: device authorization expired");
+        }
+        thread::sleep(StdDuration::from_secs(interval));
+        let (status, value) = client.post_public_response(
+            "/api/auth/device/token",
+            json!({
+                "grant_type": DEVICE_GRANT_TYPE,
+                "device_code": device_code,
+                "client_id": DEVICE_CLIENT_ID,
+            }),
+        )?;
+        if (200..300).contains(&status) {
+            break required_string(&value, "/access_token")?.to_string();
+        }
+        match value.get("error").and_then(Value::as_str) {
+            Some("authorization_pending") => continue,
+            Some("slow_down") => {
+                interval = interval.saturating_add(5);
+            }
+            Some("access_denied") => bail!("auth: device authorization denied"),
+            Some("expired_token") => bail!("auth: device authorization expired"),
+            Some(error) => bail!("auth: device authorization failed: {error}"),
+            None => bail!("auth: device authorization failed with HTTP {status}: {value}"),
+        }
+    };
+
+    let value =
+        client.post_with_bearer("/api/tokens", json!({ "name": "sieve cli" }), &access_token)?;
+    store_api_key(
+        config,
+        host,
+        value,
+        Some((verification_uri, verification_uri_complete, user_code)),
+    )
+}
+
+fn store_api_key(
+    config: &mut Config,
+    host: &str,
+    value: Value,
+    device_prompt: Option<(&str, &str, &str)>,
+) -> Result<Value> {
     let token = value
         .pointer("/token/key")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("token response did not include token.key"))?;
+    if !token.starts_with("sieve_") {
+        bail!("token response did not include a sieve_ API key");
+    }
     let token_id = value.pointer("/token/id").and_then(Value::as_str);
     config.set_token(host, token, token_id);
     config.save()?;
-    Ok(json!({ "loggedIn": true, "host": host, "tokenId": token_id }))
+    let mut result = json!({
+        "loggedIn": true,
+        "host": host,
+        "tokenId": token_id,
+    });
+    if let Some((verification_uri, verification_uri_complete, user_code)) = device_prompt {
+        result["verificationUri"] = json!(verification_uri);
+        result["verificationUriComplete"] = json!(verification_uri_complete);
+        result["userCode"] = json!(user_code);
+    }
+    Ok(result)
+}
+
+fn required_string<'a>(value: &'a Value, pointer: &str) -> Result<&'a str> {
+    value
+        .pointer(pointer)
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("server response did not include {pointer}"))
+}
+
+fn emit_device_prompt(
+    verification_uri: &str,
+    verification_uri_complete: &str,
+    user_code: &str,
+    json_output: bool,
+) -> Result<()> {
+    if json_output {
+        eprintln!(
+            "{}",
+            serde_json::to_string(&json!({
+                "deviceAuthorization": {
+                    "verificationUri": verification_uri,
+                    "verificationUriComplete": verification_uri_complete,
+                    "userCode": user_code,
+                }
+            }))?
+        );
+    } else {
+        println!("Open: {verification_uri}");
+        println!("Code: {user_code}");
+        println!("Waiting for approval...");
+        io::stdout().flush()?;
+    }
+    Ok(())
 }
 
 fn logout(client: &ApiClient, config: &mut Config, host: &str) -> Result<Value> {
@@ -1174,6 +1300,19 @@ impl ApiClient {
         self.send(self.client.post(self.url(path)).json(&body))
     }
 
+    fn post_public_response(&self, path: &str, body: Value) -> Result<(u16, Value)> {
+        self.send_response(self.client.post(self.url(path)).json(&body))
+    }
+
+    fn post_with_bearer(&self, path: &str, body: Value, token: &str) -> Result<Value> {
+        self.send(
+            self.client
+                .post(self.url(path))
+                .bearer_auth(token)
+                .json(&body),
+        )
+    }
+
     fn post_png(&self, path: &str, data: Vec<u8>) -> Result<Value> {
         self.send(
             self.auth(
@@ -1198,6 +1337,14 @@ impl ApiClient {
     }
 
     fn send(&self, request: RequestBuilder) -> Result<Value> {
+        let (status, value) = self.send_response(request)?;
+        if !(200..300).contains(&status) {
+            bail!("server returned {status}: {value}");
+        }
+        Ok(value)
+    }
+
+    fn send_response(&self, request: RequestBuilder) -> Result<(u16, Value)> {
         let retry_request = request.try_clone();
         let response = match request.send() {
             Ok(response)
@@ -1209,14 +1356,11 @@ impl ApiClient {
             Err(_) if retry_request.is_some() => retry_request.unwrap().send()?,
             Err(error) => return Err(error.into()),
         };
-        let status = response.status();
+        let status = response.status().as_u16();
         let text = response.text()?;
         let value =
             serde_json::from_str::<Value>(&text).unwrap_or_else(|_| json!({ "body": text }));
-        if !status.is_success() {
-            bail!("server returned {}: {}", status.as_u16(), value);
-        }
-        Ok(value)
+        Ok((status, value))
     }
 }
 
@@ -2644,23 +2788,6 @@ mod tests {
             &json!({ "schema": { "type": "object" } })
         )));
         assert!(!schema_drift_from_live(None));
-    }
-
-    #[test]
-    fn non_dev_login_describes_deferred_device_flow_shape() {
-        let client = ApiClient::new("https://reviews.example.com".to_string(), None);
-        let mut config = Config::default();
-        let error = login(
-            &client,
-            &mut config,
-            "https://reviews.example.com",
-            LoginArgs { dev: false },
-        )
-        .unwrap_err()
-        .to_string();
-        assert!(error.contains("verification URL"));
-        assert!(error.contains("user code"));
-        assert!(error.contains("pending org auth decision"));
     }
 
     #[test]

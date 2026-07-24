@@ -6,6 +6,7 @@ for (const path of [
   "/reviews/seed-credential-app-qr",
   "/settings/tokens",
   "/login",
+  "/device",
 ]) {
   test(`critical and serious axe smoke: ${path}`, async ({ page }) => {
     await page.goto(path);
