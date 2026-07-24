@@ -18,10 +18,10 @@ const localDevUser = {
   updatedAt: new Date(0),
 };
 
-export async function getSession() {
+export async function getSession(requestHeaders?: Headers) {
   const auth = await getAuth();
   return auth.api.getSession({
-    headers: await headers(),
+    headers: requestHeaders ?? (await headers()),
   });
 }
 
@@ -50,9 +50,7 @@ export async function isAuthorizedUser(sessionUser: {
   return linked.githubLogin ? isAllowedGithubUser(linked.githubLogin) : true;
 }
 
-export async function requireSession(returnTo?: string) {
-  const loginURL = getLoginURL(returnTo);
-  const requestHeaders = await headers();
+export async function getAuthorizedSession(requestHeaders: Headers) {
   if (/^Bearer\s+.+/i.test(requestHeaders.get("authorization") ?? "")) {
     const auth = await getAuth();
     const bearerSession = await auth.api.getSession({
@@ -64,7 +62,7 @@ export async function requireSession(returnTo?: string) {
       !bearerSession?.user ||
       (!isLocalDevUser && !(await isAuthorizedUser(bearerSession.user)))
     ) {
-      redirect(loginURL);
+      return null;
     }
     return bearerSession;
   }
@@ -83,9 +81,17 @@ export async function requireSession(returnTo?: string) {
     };
   }
 
-  const session = await getSession();
+  const session = await getSession(requestHeaders);
   if (!session?.user || !(await isAuthorizedUser(session.user))) {
-    redirect(loginURL);
+    return null;
+  }
+  return session;
+}
+
+export async function requireSession(returnTo?: string) {
+  const session = await getAuthorizedSession(await headers());
+  if (!session) {
+    redirect(getLoginURL(returnTo));
   }
   return session;
 }

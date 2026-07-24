@@ -1,10 +1,9 @@
 import { defaultKeyHasher } from "@better-auth/api-key";
 import { desc, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { getAuth } from "@/server/auth";
-import { requireSession } from "@/server/auth-middleware";
+import { getAuthorizedSession, requireSession } from "@/server/auth-middleware";
 import { getDb } from "@/server/db/client";
 import { apikey, session as authSession } from "@/server/db/schema";
 import { ensureUser } from "@/server/services/users";
@@ -34,17 +33,19 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const currentSession = await requireSession();
+  const currentSession = await getAuthorizedSession(request.headers);
+  if (!currentSession) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   const user = await ensureUser(currentSession.user);
   const body = (await request.json().catch(() => ({}))) as {
     name?: string;
   };
   const auth = await getAuth();
   const name = body.name?.trim() || "Agent token";
-  const requestHeaders = await headers();
   const token = await auth.api
     .createApiKey({
-      headers: requestHeaders,
+      headers: request.headers,
       body: {
         name,
         userId: user.id,
