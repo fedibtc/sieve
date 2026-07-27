@@ -100,9 +100,114 @@ jobs:
             "target/distrib/sieve-${{ matrix.target }}.tar.gz.sha256" \
             --clobber
 
-  publish:
+  deploy:
     if: github.event_name == 'push'
     needs: build
+    runs-on: ubuntu-22.04
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.url }}
+    concurrency:
+      group: sieve-production
+      cancel-in-progress: false
+    env:
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify tag commit is on master
+        shell: bash
+        run: |
+          git fetch --no-tags origin master
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/master; then
+            echo "::error::Release tag must point to a commit on origin/master."
+            exit 1
+          fi
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install application dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Vercel CLI
+        run: npm install --global vercel@56.5.0
+
+      - name: Validate production credentials
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+        shell: bash
+        run: |
+          if [[ -z "$VERCEL_TOKEN" ]]; then
+            echo "::error::VERCEL_TOKEN is not configured."
+            exit 1
+          fi
+          if [[ -z "$DATABASE_URL" ]]; then
+            echo "::error::PRODUCTION_DATABASE_URL is not configured."
+            exit 1
+          fi
+
+      - name: Pull Vercel production configuration
+        run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+
+      - name: Build production deployment
+        run: vercel build --prod --token="$VERCEL_TOKEN"
+
+      - name: Apply production database migrations
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+        run: pnpm db:migrate
+
+      - name: Deploy production
+        id: deploy
+        shell: bash
+        run: |
+          deployment_url="$(
+            vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN"
+          )"
+          echo "url=$deployment_url" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test production device authorization
+        shell: bash
+        run: |
+          response_file="$(mktemp)"
+          curl --fail-with-body \
+            --retry 5 \
+            --retry-all-errors \
+            --retry-delay 2 \
+            --header "content-type: application/json" \
+            --request POST \
+            --data '{"client_id":"sieve-cli","scope":"api_key"}' \
+            --output "$response_file" \
+            https://sieve.fedi.xyz/api/auth/device/code
+          node -e '
+            const fs = require("node:fs");
+            const response = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (
+              typeof response.device_code !== "string" ||
+              typeof response.user_code !== "string" ||
+              typeof response.verification_uri !== "string"
+            ) {
+              throw new Error("Production device authorization response is invalid");
+            }
+          ' "$response_file"
+
+  publish:
+    if: github.event_name == 'push'
+    needs:
+      - build
+      - deploy
     runs-on: ubuntu-22.04
     permissions:
       contents: write
