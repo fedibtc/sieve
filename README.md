@@ -117,9 +117,12 @@ Question-form answers are currently stored as anchored comments. The `answer` an
 
 The `/api/mcp` route remains available for old sessions during migration, but it is frozen. The supported agent transport is the `sieve` CLI over `/api/agent/v1`.
 
-## Cutting A CLI Release
+## Cutting A Release
 
-GitHub Actions builds and publishes release binaries. Maintainers do not build or upload them locally.
+GitHub Actions builds the release binaries, migrates and deploys the tagged web
+application to Vercel production, verifies the production device-authorization
+route, and then publishes the GitHub release. Maintainers do not build, deploy,
+or upload releases locally.
 
 1. Update `version` in `cli/Cargo.toml` and commit the change after CI passes.
 2. Check the release plan with `nix develop --command nix run nixpkgs#cargo-dist -- plan --tag v0.3.0`.
@@ -130,13 +133,25 @@ git tag -s v0.3.0
 git push origin v0.3.0
 ```
 
-`.github/workflows/release.yml` uses cargo-dist for native builds but uploads directly to a draft GitHub release because the organization does not currently have Actions artifact-storage capacity. Validate release configuration changes with:
+The `production` GitHub environment must allow `v*` tags and provide
+`VERCEL_TOKEN` and `PRODUCTION_DATABASE_URL` secrets plus `VERCEL_ORG_ID` and
+`VERCEL_PROJECT_ID` variables. Production migrations must remain backward
+compatible with the currently deployed application in case deployment fails
+after migration succeeds.
+
+`.github/workflows/release.yml` uses cargo-dist for native builds but uploads
+directly to a draft GitHub release because the organization does not currently
+have Actions artifact-storage capacity. Validate release configuration changes
+with:
 
 ```bash
 nix develop --command nix run nixpkgs#cargo-dist -- plan --tag v0.3.0
 ```
 
-The release workflow runs the reusable preflight checks, builds each configured OS/architecture target, creates checksums, and publishes the draft GitHub release only when every required job succeeds.
+The release workflow runs the reusable preflight checks, builds each configured
+OS/architecture target, creates checksums, migrates and deploys the tagged
+application, smoke-tests production, and publishes the draft GitHub release
+only when every required job succeeds.
 
 ## Acknowledgements
 
