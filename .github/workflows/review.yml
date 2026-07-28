@@ -1,0 +1,67 @@
+name: 'Sieve review (reusable)'
+
+# Reusable review workflow for org repos. A repo adds a thin caller (see
+# docs/reusable-review.md) that fires this on pull_request activity. This
+# checks out the PR head, installs the sieve binary, and publishes a review
+# with a sticky comment. Fedi runs its own NixOS workflow with extra gating
+# instead of calling this one.
+on:
+  workflow_call:
+    inputs:
+      sieve_host:
+        description: 'Sieve server URL'
+        type: string
+        default: 'https://sieve.fedi.xyz'
+      sieve_version:
+        # The default must be a release that ships `sieve review-pr`.
+        description: 'Sieve release tag to install'
+        type: string
+        default: 'v0.4.2'
+    secrets:
+      SIEVE_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    name: 'Publish sieve review'
+    # Fork PRs get no secrets, so only same-repo PRs are reviewed.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Check out the PR head
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      # The install script comes from sieve, pinned to the ref the caller
+      # used, so a PR branch cannot alter it.
+      - name: Check out sieve tooling
+        uses: actions/checkout@v6
+        with:
+          repository: fedibtc/sieve
+          ref: ${{ github.job_workflow_sha }}
+          path: sieve-tooling
+          persist-credentials: false
+
+      - name: Install sieve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIEVE_VERSION: ${{ inputs.sieve_version }}
+        run: ./sieve-tooling/scripts/ci/setup-sieve.sh
+
+      # The PR is resolved from the checked-out branch, so no PR metadata
+      # env is needed.
+      - name: Publish review and sticky PR comment
+        env:
+          SIEVE_HOST: ${{ inputs.sieve_host }}
+          SIEVE_TOKEN: ${{ secrets.SIEVE_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: sieve --host "$SIEVE_HOST" review-pr
