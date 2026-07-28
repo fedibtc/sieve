@@ -69,6 +69,7 @@ enum Commands {
     Status,
     Scaffold(ScaffoldArgs),
     Publish(PublishArgs),
+    ReviewPr,
     Get(ReviewId),
     List(ListArgs),
     Feedback(ReviewId),
@@ -121,6 +122,12 @@ struct ScaffoldArgs {
 struct PublishArgs {
     #[arg(long)]
     manifest: PathBuf,
+    #[command(flatten)]
+    options: PublishOptions,
+}
+
+#[derive(Args, Clone, Default)]
+struct PublishOptions {
     #[arg(long)]
     dry_run: bool,
     #[arg(long)]
@@ -333,6 +340,7 @@ fn run(cli: Cli, json_output: bool) -> Result<()> {
         Commands::Status => status(&client),
         Commands::Scaffold(args) => scaffold(args),
         Commands::Publish(args) => publish(&client, args),
+        Commands::ReviewPr => review_pr(&client),
         Commands::Get(args) => client.get(&format!("/api/agent/v1/reviews/{}", args.review_id)),
         Commands::List(args) => list(&client, args),
         Commands::Feedback(args) => feedback(&client, args),
@@ -706,35 +714,46 @@ fn scaffold(args: ScaffoldArgs) -> Result<Value> {
 fn publish(client: &ApiClient, args: PublishArgs) -> Result<Value> {
     let raw = fs::read_to_string(&args.manifest)
         .with_context(|| format!("failed to read {}", args.manifest.display()))?;
-    let mut manifest: Value = serde_json::from_str(&raw)?;
+    let manifest: Value = serde_json::from_str(&raw)?;
+    publish_manifest(client, manifest, args.options)
+}
+
+fn publish_manifest(
+    client: &ApiClient,
+    mut manifest: Value,
+    options: PublishOptions,
+) -> Result<Value> {
     let mut warnings = schema_drift_warnings(client);
     let policy = policy::discover();
     warnings.extend(policy.warnings());
-    for warning in args.review_warnings {
+    for warning in options.review_warnings {
         if warning.trim().is_empty() {
             bail!("--review-warning requires a non-empty message");
         }
         insert_review_output_warning(&mut manifest, "review-warning", warning.trim().to_string())?;
     }
-    warnings.extend(expand_manifest(&mut manifest, args.allow_unverified_diffs)?);
+    warnings.extend(expand_manifest(
+        &mut manifest,
+        options.allow_unverified_diffs,
+    )?);
     validate_manifest_content(&manifest)?;
     enforce_budgets(&manifest)?;
     let findings = redact_findings(&manifest);
     let blocked_findings = findings
         .iter()
-        .filter(|finding| !args.allow_findings.contains(&finding.allow_id()))
+        .filter(|finding| !options.allow_findings.contains(&finding.allow_id()))
         .cloned()
         .collect::<Vec<_>>();
-    if !blocked_findings.is_empty() && !args.redact {
+    if !blocked_findings.is_empty() && !options.redact {
         bail!(
             "redaction findings blocked publish: {}",
             summarize_findings(&blocked_findings).join(", ")
         );
     }
-    if args.redact {
-        redact_value(&mut manifest, &args.allow_findings);
+    if options.redact {
+        redact_value(&mut manifest, &options.allow_findings);
     }
-    if args.dry_run {
+    if options.dry_run {
         return Ok(json!({
             "dryRun": true,
             "manifest": manifest,
@@ -747,6 +766,162 @@ fn publish(client: &ApiClient, args: PublishArgs) -> Result<Value> {
         result["warnings"] = json!(warnings);
     }
     Ok(result)
+}
+
+fn review_pr(client: &ApiClient) -> Result<Value> {
+    let pr_raw = command_output(
+        "gh",
+        &["pr", "view", "--json", "number,title,url,baseRefName"],
+    )?;
+    let pr: Value = serde_json::from_str(&pr_raw)?;
+    let pr_number = pr
+        .get("number")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| anyhow!("no pull request found for the checked-out branch"))?;
+    let pr_title = pr
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let pr_url = pr
+        .get("url")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let base_ref = pr
+        .get("baseRefName")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("pull request has no base branch"))?
+        .to_string();
+    // CI checkouts fetch only the head branch, so origin/<base> does not
+    // exist locally and the scaffold diff would fail without this.
+    git(["fetch", "--no-tags", "origin", &base_ref])?;
+    let mut manifest = scaffold(ScaffoldArgs {
+        base: format!("origin/{base_ref}"),
+        head: "HEAD".to_string(),
+        output: None,
+    })?;
+    enrich_scaffold(&mut manifest, pr_number, &pr_title, &pr_url, &base_ref);
+    let published = publish_dropping_oversized(client, manifest)?;
+    let review_id = published
+        .pointer("/review/id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("publish response has no review id"))?
+        .to_string();
+    let review_url = published
+        .get("url")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    if let Ok(path) = env::var("GITHUB_STEP_SUMMARY") {
+        let mut summary = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
+        writeln!(summary, "[Sieve review for PR #{pr_number}]({review_url})")?;
+    }
+    let head_sha = git(["rev-parse", "HEAD"]).ok();
+    let comment = upsert_pr_comment(client, &review_id, head_sha.as_deref())?;
+    Ok(json!({
+        "review": review_id,
+        "url": review_url,
+        "headSha": head_sha,
+        "comment": comment,
+    }))
+}
+
+// The scaffold only knows repo and branch, so the PR linkage and the
+// placeholder block summaries are filled in from PR metadata here.
+fn enrich_scaffold(
+    manifest: &mut Value,
+    pr_number: u64,
+    pr_title: &str,
+    pr_url: &str,
+    base_ref: &str,
+) {
+    manifest["title"] = json!(format!("PR #{pr_number}: {pr_title}"));
+    manifest["prNumber"] = json!(pr_number);
+    manifest["prUrl"] = json!(pr_url);
+    let summary = format!(
+        "## Sieve review\n\nAuto-published review surface for {pr_url} (diff vs `{base_ref}`). Blocks below are generated mechanically from the PR diff."
+    );
+    let Some(blocks) = manifest
+        .pointer_mut("/content/blocks")
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+    for block in blocks {
+        if block.get("id").and_then(Value::as_str) == Some("summary") {
+            block["data"]["markdown"] = json!(summary);
+            continue;
+        }
+        let path = block.get("path").and_then(Value::as_str).unwrap_or("");
+        match block.get("type").and_then(Value::as_str) {
+            Some("diff-ref") => block["summary"] = json!(format!("Diff: {path}")),
+            Some("annotated-code-ref") => block["summary"] = json!(format!("New file: {path}")),
+            _ => {}
+        }
+    }
+}
+
+// A single oversized evidence block fails the whole publish, so drop them
+// one at a time and retry; the file-tree still records every changed file.
+fn publish_dropping_oversized(client: &ApiClient, mut manifest: Value) -> Result<Value> {
+    // An unattended publish cannot stop to triage redaction findings the way
+    // an agent running plain `publish` can, so token-looking spans in the
+    // diff are masked instead of blocking the review.
+    let options = PublishOptions {
+        redact: true,
+        ..PublishOptions::default()
+    };
+    for _ in 0..=MAX_KEY_DIFFS {
+        let error = match publish_manifest(client, manifest.clone(), options.clone()) {
+            Ok(published) => return Ok(published),
+            Err(error) => error,
+        };
+        let Some(path) = backtick_quoted(&error.to_string()) else {
+            return Err(error);
+        };
+        if !drop_evidence_block(&mut manifest, &path) {
+            return Err(error);
+        }
+        eprintln!("dropping oversized evidence block for {path}");
+    }
+    bail!("publish kept failing after dropping every oversized evidence block")
+}
+
+fn backtick_quoted(message: &str) -> Option<String> {
+    let start = message.find('`')? + 1;
+    let end = start + message[start..].find('`')?;
+    (start < end).then(|| message[start..end].to_string())
+}
+
+fn drop_evidence_block(manifest: &mut Value, path: &str) -> bool {
+    let Some(blocks) = manifest
+        .pointer_mut("/content/blocks")
+        .and_then(Value::as_array_mut)
+    else {
+        return false;
+    };
+    let is_evidence = |block: &Value| {
+        matches!(
+            block.get("type").and_then(Value::as_str),
+            Some("diff-ref") | Some("annotated-code-ref")
+        )
+    };
+    let before = blocks.len();
+    blocks.retain(|block| {
+        !(is_evidence(block) && block.get("path").and_then(Value::as_str) == Some(path))
+    });
+    if blocks.len() == before {
+        return false;
+    }
+    // With no evidence left the "Key changes" section would sit empty.
+    if !blocks.iter().any(is_evidence) {
+        blocks.retain(|block| block.get("id").and_then(Value::as_str) != Some("key-changes"));
+    }
+    true
 }
 
 fn feedback(client: &ApiClient, args: ReviewId) -> Result<Value> {
@@ -865,6 +1040,10 @@ fn upload_png(client: &ApiClient, data: Vec<u8>) -> Result<Value> {
 }
 
 fn pr_comment(client: &ApiClient, review_id: String) -> Result<Value> {
+    upsert_pr_comment(client, &review_id, None)
+}
+
+fn upsert_pr_comment(client: &ApiClient, review_id: &str, head_sha: Option<&str>) -> Result<Value> {
     let review = client.get(&format!("/api/agent/v1/reviews/{review_id}"))?;
     let url = review
         .get("url")
@@ -872,7 +1051,12 @@ fn pr_comment(client: &ApiClient, review_id: String) -> Result<Value> {
         .unwrap_or("")
         .to_string();
     let marker = format!("<!-- sieve:{review_id} -->");
-    let body = format!("{marker}\n\nSieve: {url}\n");
+    // The reviewed head rides along invisibly so a sweeper can tell whether
+    // the PR moved since the last review without keeping state anywhere.
+    let head_line = head_sha
+        .map(|sha| format!("<!-- sieve-head:{sha} -->\n"))
+        .unwrap_or_default();
+    let body = format!("{marker}\n{head_line}\nSieve: {url}\n");
     let pr_number =
         command_output("gh", &["pr", "view", "--json", "number", "--jq", ".number"]).ok();
     let Some(pr_number) = pr_number.filter(|v| !v.trim().is_empty()) else {
@@ -3031,6 +3215,85 @@ mod tests {
                 other => panic!("unsupported fixture expectation: {other}"),
             }
         }
+    }
+
+    #[test]
+    fn enrich_scaffold_fills_placeholders_and_pr_linkage() {
+        let mut manifest = json!({
+            "title": "repo: branch",
+            "content": { "version": 1, "blocks": [
+                { "id": "summary", "type": "rich-text",
+                  "data": { "markdown": "## Outcome\nReplace this with the validation result." } },
+                { "id": "key-1", "type": "diff-ref", "path": "src/a.rs",
+                  "summary": "Replace with what changed and why" },
+                { "id": "key-2", "type": "annotated-code-ref", "path": "src/b.rs",
+                  "summary": "Replace with why this new file matters" },
+            ]}
+        });
+        enrich_scaffold(
+            &mut manifest,
+            7,
+            "Fix the thing",
+            "https://github.com/o/r/pull/7",
+            "master",
+        );
+        assert_eq!(manifest["title"], json!("PR #7: Fix the thing"));
+        assert_eq!(manifest["prNumber"], json!(7));
+        assert_eq!(manifest["prUrl"], json!("https://github.com/o/r/pull/7"));
+        let markdown = manifest
+            .pointer("/content/blocks/0/data/markdown")
+            .and_then(Value::as_str)
+            .unwrap();
+        assert!(markdown.starts_with("## Sieve review"));
+        assert!(!markdown.contains("Replace this"));
+        assert_eq!(
+            manifest.pointer("/content/blocks/1/summary"),
+            Some(&json!("Diff: src/a.rs"))
+        );
+        assert_eq!(
+            manifest.pointer("/content/blocks/2/summary"),
+            Some(&json!("New file: src/b.rs"))
+        );
+    }
+
+    #[test]
+    fn drop_evidence_block_removes_path_and_orphaned_section() {
+        let mut manifest = json!({ "content": { "blocks": [
+            { "id": "summary", "type": "rich-text", "data": { "markdown": "hi" } },
+            { "id": "key-changes", "type": "section", "data": { "title": "Key changes" } },
+            { "id": "key-1", "type": "diff-ref", "path": "big.ts", "summary": "s" },
+            { "id": "key-2", "type": "annotated-code-ref", "path": "new.ts", "summary": "s" },
+        ]}});
+        assert!(drop_evidence_block(&mut manifest, "big.ts"));
+        let blocks = manifest
+            .pointer("/content/blocks")
+            .and_then(Value::as_array)
+            .unwrap();
+        assert!(blocks
+            .iter()
+            .all(|block| block.get("path") != Some(&json!("big.ts"))));
+        assert!(blocks
+            .iter()
+            .any(|block| block["id"] == json!("key-changes")));
+        assert!(drop_evidence_block(&mut manifest, "new.ts"));
+        let blocks = manifest
+            .pointer("/content/blocks")
+            .and_then(Value::as_array)
+            .unwrap();
+        assert!(blocks
+            .iter()
+            .all(|block| block["id"] != json!("key-changes")));
+        assert!(!drop_evidence_block(&mut manifest, "gone.ts"));
+    }
+
+    #[test]
+    fn backtick_quoted_extracts_first_token() {
+        assert_eq!(
+            backtick_quoted("diff-ref `a/b.rs` expands to 200 lines"),
+            Some("a/b.rs".to_string())
+        );
+        assert_eq!(backtick_quoted("no ticks here"), None);
+        assert_eq!(backtick_quoted("empty `` ticks"), None);
     }
 
     #[test]
