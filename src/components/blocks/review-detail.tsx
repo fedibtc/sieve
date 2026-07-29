@@ -12,6 +12,7 @@ import {
   FileCode2,
   Folder,
   GitBranch,
+  GitCompareArrows,
   Image as ImageIcon,
   MessageSquare,
   Radio,
@@ -46,6 +47,7 @@ type Review = {
   id: string;
   title: string;
   summary: string | null;
+  origin: "authored" | "derived";
   repo: string;
   branch: string;
   baseRef: string | null;
@@ -273,6 +275,11 @@ export function ReviewDetail({
             <h1 className="mt-2 text-3xl font-semibold tracking-tight">
               {review.title}
             </h1>
+            {review.summary ? (
+              <p className="mt-2 max-w-3xl text-base text-muted-foreground">
+                {review.summary}
+              </p>
+            ) : null}
             <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
               <span className="inline-flex items-center gap-1 rounded-full border bg-card px-2 py-0.5 font-mono text-xs">
                 {review.repo}
@@ -285,12 +292,17 @@ export function ReviewDetail({
               <span className="inline-flex items-center rounded-full border bg-card px-2 py-0.5 font-mono text-xs">
                 v{review.contentVersion}
               </span>
-              {review.agentName ? (
+              {review.origin === "derived" ? (
+                <span className="inline-flex items-center gap-1 rounded-full border bg-card px-2 py-0.5 text-xs">
+                  <GitCompareArrows className="h-3 w-3" />
+                  derived from the diff
+                </span>
+              ) : (
                 <span className="inline-flex items-center gap-1 rounded-full border bg-card px-2 py-0.5 text-xs">
                   <Bot className="h-3 w-3" />
-                  {review.agentName}
+                  {review.agentName ?? "authored"}
                 </span>
-              ) : null}
+              )}
               <RelativeTime prefix="updated" value={review.updatedAt} />
               {review.prUrl ? (
                 <a

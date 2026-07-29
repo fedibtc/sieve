@@ -74,6 +74,11 @@ export default async function ReviewsPage({
                   <span className="font-mono text-sm text-muted-foreground">
                     {review.repo}
                   </span>
+                  <Badge className="ml-2" tone="neutral">
+                    {review.origin === "derived"
+                      ? "derived"
+                      : (review.agentName ?? "authored")}
+                  </Badge>
                   {review.prUrl ? (
                     <span
                       className="ml-2 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs text-muted-foreground"
