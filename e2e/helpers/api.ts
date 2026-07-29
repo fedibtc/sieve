@@ -165,6 +165,29 @@ export function allBlockTypes(): ReviewBlock[] {
       data: { tone, markdown: `A ${tone} callout.` },
     })),
     {
+      id: "shape",
+      type: "change-shape",
+      summary: "Where the change lands",
+      data: {
+        areas: [
+          {
+            area: "src/app",
+            files: 2,
+            additions: 180,
+            deletions: 50,
+            change: "modified",
+          },
+          {
+            area: "scripts/ci",
+            files: 1,
+            additions: 30,
+            deletions: 0,
+            change: "added",
+          },
+        ],
+      },
+    },
+    {
       id: "tree",
       type: "file-tree",
       summary: "Files",

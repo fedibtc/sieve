@@ -132,6 +132,25 @@ const apiEndpointBlockSchema = z.object({
   }),
 });
 
+const changeShapeBlockSchema = z.object({
+  id: z.string().min(1),
+  type: z.literal("change-shape"),
+  summary: z.string().optional(),
+  data: z.object({
+    areas: z
+      .array(
+        z.object({
+          area: z.string().min(1),
+          files: z.number().int().positive(),
+          additions: z.number().int().nonnegative(),
+          deletions: z.number().int().nonnegative(),
+          change: z.enum(["added", "modified", "removed"]),
+        }),
+      )
+      .min(1),
+  }),
+});
+
 const mermaidBlockSchema = z.object({
   id: z.string().min(1),
   type: z.literal("mermaid"),
@@ -240,6 +259,7 @@ export const blockSchema = z.discriminatedUnion("type", [
   annotatedCodeBlockSchema,
   dataModelBlockSchema,
   apiEndpointBlockSchema,
+  changeShapeBlockSchema,
   mermaidBlockSchema,
   questionFormBlockSchema,
   imageDiffBlockSchema,

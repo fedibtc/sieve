@@ -575,6 +575,81 @@
               },
               "type": {
                 "type": "string",
+                "const": "change-shape"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "data": {
+                "type": "object",
+                "properties": {
+                  "areas": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "area": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "files": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "additions": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "deletions": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "change": {
+                          "type": "string",
+                          "enum": [
+                            "added",
+                            "modified",
+                            "removed"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "area",
+                        "files",
+                        "additions",
+                        "deletions",
+                        "change"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "areas"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "type",
+              "data"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "type": {
+                "type": "string",
                 "const": "mermaid"
               },
               "summary": {

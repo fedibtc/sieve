@@ -23,6 +23,15 @@ test("all block types render and key per-block controls have effects", async ({
     await expect(page.getByText(`A ${tone} callout.`)).toBeVisible();
   }
 
+  await expect(page.getByText("Where the change lands")).toBeVisible();
+  const shapeBlock = page.locator("article", {
+    hasText: "Where the change lands",
+  });
+  await expect(shapeBlock.getByText("src/app", { exact: true })).toBeVisible();
+  await expect(shapeBlock.getByText("2 files")).toBeVisible();
+  await expect(shapeBlock.getByText("+180")).toBeVisible();
+  await expect(shapeBlock.getByText("-50")).toBeVisible();
+
   await page.getByRole("button", { name: /src\/a\.ts/ }).click();
   await expect(page.getByTitle("Clear anchor")).toContainText("src/a.ts");
 
