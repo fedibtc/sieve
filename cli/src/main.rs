@@ -801,6 +801,12 @@ fn review_pr(client: &ApiClient) -> Result<Value> {
         head: "HEAD".to_string(),
         output: None,
     })?;
+    if !manifest_has_changes(&manifest) {
+        return Ok(json!({
+            "skipped": true,
+            "reason": "the PR has no diff against its base branch",
+        }));
+    }
     enrich_scaffold(&mut manifest, pr_number, &pr_title, &pr_url, &base_ref);
     let published = publish_dropping_oversized(client, manifest)?;
     let review_id = published
@@ -828,6 +834,23 @@ fn review_pr(client: &ApiClient) -> Result<Value> {
         "headSha": head_sha,
         "comment": comment,
     }))
+}
+
+// An empty file-tree means the head matches the base (e.g. a just-merged
+// PR); publishing it would fail schema validation with an opaque error.
+fn manifest_has_changes(manifest: &Value) -> bool {
+    manifest
+        .pointer("/content/blocks")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|block| block.get("type").and_then(Value::as_str) == Some("file-tree"))
+        .any(|block| {
+            block
+                .pointer("/data/entries")
+                .and_then(Value::as_array)
+                .is_some_and(|entries| !entries.is_empty())
+        })
 }
 
 // The scaffold only knows repo and branch, so the PR linkage and the
@@ -3215,6 +3238,19 @@ mod tests {
                 other => panic!("unsupported fixture expectation: {other}"),
             }
         }
+    }
+
+    #[test]
+    fn manifest_has_changes_requires_file_tree_entries() {
+        let empty = json!({"content": {"blocks": [
+            {"id": "files", "type": "file-tree", "data": {"entries": []}}
+        ]}});
+        assert!(!manifest_has_changes(&empty));
+        let full = json!({"content": {"blocks": [
+            {"id": "files", "type": "file-tree", "data": {"entries": [{"path": "a.rs"}]}}
+        ]}});
+        assert!(manifest_has_changes(&full));
+        assert!(!manifest_has_changes(&json!({"content": {"blocks": []}})));
     }
 
     #[test]
