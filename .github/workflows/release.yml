@@ -145,16 +145,10 @@ jobs:
         run: npm install --global vercel@56.5.0
 
       - name: Validate production credentials
-        env:
-          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
         shell: bash
         run: |
           if [[ -z "$VERCEL_TOKEN" ]]; then
             echo "::error::VERCEL_TOKEN is not configured."
-            exit 1
-          fi
-          if [[ -z "$DATABASE_URL" ]]; then
-            echo "::error::PRODUCTION_DATABASE_URL is not configured."
             exit 1
           fi
 
@@ -165,9 +159,8 @@ jobs:
         run: vercel build --prod --token="$VERCEL_TOKEN"
 
       - name: Apply production database migrations
-        env:
-          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
-        run: pnpm db:migrate
+        shell: bash
+        run: ./scripts/ci/migrate-production.sh
 
       - name: Deploy production
         id: deploy
