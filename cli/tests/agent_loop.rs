@@ -644,6 +644,7 @@ fn write_manifest_with_blocks(
         path,
         serde_json::to_string_pretty(&json!({
             "title": "CLI integration recap",
+            "origin": "derived",
             "repo": "fedibtc/sieve",
             "branch": "codex/cli-integration",
             "idempotencyKey": idempotency_key,

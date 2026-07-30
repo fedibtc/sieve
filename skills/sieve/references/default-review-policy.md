@@ -48,13 +48,17 @@ A useful default shape is:
 
 1. A short outcome summary covering what changed, why, material risk, and the
    validation that actually ran.
-2. Visual artifacts near the outcome when they materially help review.
-3. Contract blocks (`data-model`, `api-endpoint`, `annotated-code`, or
+2. The scaffold's `change-shape` block: areas by directory sized by churn,
+   derived mechanically from the diff. Keep it near the top so the reader
+   sees the shape of the change before any detail; there is no reason to
+   hand-author one.
+3. Visual artifacts near the outcome when they materially help review.
+4. Contract blocks (`data-model`, `api-endpoint`, `annotated-code`, or
    `mermaid`) before raw diffs when they explain the change better.
-4. A `file-tree` for the complete changed-file footprint.
-5. A "Key changes" section with focused implementation evidence when several
+5. A `file-tree` for the complete changed-file footprint.
+6. A "Key changes" section with focused implementation evidence when several
    load-bearing surfaces changed.
-6. An optional `question-form` only for a real open question.
+7. An optional `question-form` only for a real open question.
 
 ## Block mapping defaults
 

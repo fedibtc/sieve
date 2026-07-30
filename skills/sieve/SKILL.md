@@ -68,6 +68,8 @@ Skip Sieve for trivial diffs where a normal chat summary is enough. Use it when 
 
    The scaffold is a bounded candidate list, not a publishable recap. Edit `recap.json`: replace every placeholder summary with reviewer intent, remove evidence that is tiny or redundant, add annotations, and include exact validation results.
 
+   The scaffold sets `"origin": "derived"`, which marks a mechanical recap. Once you author the recap, flip it to `"origin": "authored"` and set the top-level `summary` to a one-sentence claim about the change (what changed and why it is safe or risky). The server rejects an authored publish whose summary is missing or merely repeats the title, and the review page shows the origin and renders the claim under the title.
+
 5. For UI-facing changes, determine how this repository produces visual evidence. Check project guidance, repository docs, package scripts, CI, and existing screenshot, visual-regression, end-to-end, story, or preview tooling. The developing agent owns that workflow; Sieve does not prescribe a capture or comparison command.
 
    Publish useful artifacts produced by that workflow with `sieve attach`.

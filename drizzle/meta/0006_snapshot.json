@@ -1,6 +1,6 @@
 {
-  "id": "cd493927-825e-4607-8dd0-5eb6e4bb16bf",
-  "prevId": "ec5637d0-626a-436a-8dfb-cc9364f50eef",
+  "id": "56a31cda-953a-4a66-a9a0-1c5177f04734",
+  "prevId": "cd493927-825e-4607-8dd0-5eb6e4bb16bf",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -516,19 +516,50 @@
           "name": "width",
           "type": "integer",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "height": {
           "name": "height",
           "type": "integer",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
+        },
+        "duration_ms": {
+          "name": "duration_ms",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "original_filename": {
+          "name": "original_filename",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "storage_provider": {
+          "name": "storage_provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "storage_key": {
+          "name": "storage_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'ready'"
         },
         "data": {
           "name": "data",
           "type": "bytea",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "created_by_user_id": {
           "name": "created_by_user_id",

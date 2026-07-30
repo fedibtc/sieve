@@ -6,6 +6,7 @@ export const publishReviewInput = z.object({
   id: z.string().min(1).optional(),
   title: z.string().min(1),
   summary: z.string().optional().nullable(),
+  origin: z.enum(["authored", "derived"]),
   repo: z.string().min(1),
   branch: z.string().min(1),
   baseRef: z.string().optional().nullable(),

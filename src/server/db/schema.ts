@@ -28,6 +28,7 @@ export const reviewStatus = pgEnum("review_status", [
   "archived",
 ]);
 export const createdBy = pgEnum("created_by", ["human", "agent", "system"]);
+export const reviewOrigin = pgEnum("review_origin", ["authored", "derived"]);
 export const resolutionTarget = pgEnum("resolution_target", ["agent", "human"]);
 export const commentStatus = pgEnum("comment_status", ["open", "resolved"]);
 export const eventType = pgEnum("event_type", [
@@ -202,6 +203,7 @@ export const reviews = pgTable(
     prNumber: integer("pr_number"),
     prUrl: text("pr_url"),
     status: reviewStatus("status").notNull().default("open"),
+    origin: reviewOrigin("origin").notNull(),
     content: jsonb("content").notNull(),
     contentVersion: integer("content_version").notNull().default(1),
     idempotencyKey: text("idempotency_key").notNull(),

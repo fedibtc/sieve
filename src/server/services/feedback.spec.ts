@@ -31,6 +31,7 @@ describe("feedback partitioning", () => {
       emailVerified: true,
     });
     const review = await upsertReview({
+      origin: "derived",
       title: "Feedback check",
       repo: "fedibtc/credential-app",
       branch: "codex/test",
@@ -216,6 +217,7 @@ describe("feedback partitioning", () => {
     });
 
     await upsertReview({
+      origin: "derived",
       title: "Feedback check",
       repo: "fedibtc/credential-app",
       branch: "codex/test",
@@ -253,6 +255,7 @@ describe("feedback partitioning", () => {
     });
 
     await upsertReview({
+      origin: "derived",
       title: "Feedback check",
       repo: "fedibtc/credential-app",
       branch: "codex/test",
@@ -289,6 +292,7 @@ async function setupFeedbackReview() {
     emailVerified: true,
   });
   const review = await upsertReview({
+    origin: "derived",
     title: "Feedback check",
     repo: "fedibtc/credential-app",
     branch: "codex/test",

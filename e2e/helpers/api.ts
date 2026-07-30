@@ -16,6 +16,7 @@ export async function publishFixtureReview(
     repo?: string;
     blocks?: ReviewBlock[];
     idempotencyKey?: string;
+    origin?: "authored" | "derived";
   } = {},
 ) {
   const key = input.idempotencyKey ?? `e2e:${nanoid()}`;
@@ -23,6 +24,7 @@ export async function publishFixtureReview(
     data: {
       title: input.title ?? `E2E review ${key}`,
       summary: "E2E fixture review",
+      origin: input.origin ?? "authored",
       repo: input.repo ?? "e2e/review-helper",
       branch: "codex/e2e",
       baseRef: "main",
@@ -201,6 +203,29 @@ export function allBlockTypes(recordingAttachmentId?: string): ReviewBlock[] {
       summary: `${tone} callout`,
       data: { tone, markdown: `A ${tone} callout.` },
     })),
+    {
+      id: "shape",
+      type: "change-shape",
+      summary: "Where the change lands",
+      data: {
+        areas: [
+          {
+            area: "src/app",
+            files: 2,
+            additions: 180,
+            deletions: 50,
+            change: "modified",
+          },
+          {
+            area: "scripts/ci",
+            files: 1,
+            additions: 30,
+            deletions: 0,
+            change: "added",
+          },
+        ],
+      },
+    },
     {
       id: "tree",
       type: "file-tree",

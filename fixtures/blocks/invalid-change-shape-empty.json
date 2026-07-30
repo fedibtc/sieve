@@ -1,0 +1,15 @@
+{
+  "expect": "invalid",
+  "document": {
+    "version": 1,
+    "blocks": [
+      {
+        "id": "shape",
+        "type": "change-shape",
+        "data": {
+          "areas": []
+        }
+      }
+    ]
+  }
+}

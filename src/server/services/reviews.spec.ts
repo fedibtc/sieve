@@ -20,6 +20,7 @@ describe("review service", () => {
       emailVerified: true,
     });
     const first = await upsertReview({
+      origin: "derived",
       title: "First",
       repo: "fedibtc/credential-app",
       branch: "codex/test",
@@ -28,6 +29,7 @@ describe("review service", () => {
       createdByUserId: user.id,
     });
     const second = await upsertReview({
+      origin: "derived",
       title: "Second",
       repo: "fedibtc/credential-app",
       branch: "codex/test",
@@ -49,6 +51,7 @@ describe("review service", () => {
       emailVerified: true,
     });
     const review = await upsertReview({
+      origin: "derived",
       title: "Approval check",
       repo: "fedibtc/credential-app",
       branch: "codex/test",
@@ -102,6 +105,7 @@ describe("review service", () => {
       emailVerified: true,
     });
     const review = await upsertReview({
+      origin: "derived",
       title: "PR check",
       repo: "fedibtc/credential-app",
       branch: "codex/test",
@@ -118,6 +122,7 @@ describe("review service", () => {
     });
 
     const updated = await upsertReview({
+      origin: "derived",
       title: "PR check v2",
       repo: "fedibtc/credential-app",
       branch: "codex/test",
@@ -139,6 +144,7 @@ describe("review service", () => {
       emailVerified: true,
     });
     const review = await upsertReview({
+      origin: "derived",
       title: "Comment count",
       repo: "fedibtc/credential-app",
       branch: "codex/test",
@@ -183,6 +189,7 @@ describe("review service", () => {
 
     await expect(
       upsertReview({
+        origin: "derived",
         title: "Dangling visual",
         repo: "fedibtc/credential-app",
         branch: "codex/test",
@@ -218,6 +225,7 @@ describe("review service", () => {
     });
 
     const review = await upsertReview({
+      origin: "derived",
       title: "Stored visual",
       repo: "fedibtc/credential-app",
       branch: "codex/test",
@@ -231,6 +239,96 @@ describe("review service", () => {
     });
 
     expect(review.title).toBe("Stored visual");
+  });
+
+  it("rejects an authored publish without a claim", async () => {
+    const user = await ensureUser({
+      id: "agent",
+      name: "Agent",
+      email: "agent@localhost",
+      emailVerified: true,
+    });
+
+    await expect(
+      upsertReview({
+        origin: "authored",
+        title: "Claimless",
+        repo: "fedibtc/credential-app",
+        branch: "codex/test",
+        content: credentialAppSeedReview,
+        idempotencyKey: "claimless-key",
+        createdByUserId: user.id,
+      }),
+    ).rejects.toThrow(/summary claim/);
+
+    await expect(
+      upsertReview({
+        origin: "authored",
+        title: "Claimless",
+        summary: "   ",
+        repo: "fedibtc/credential-app",
+        branch: "codex/test",
+        content: credentialAppSeedReview,
+        idempotencyKey: "claimless-key",
+        createdByUserId: user.id,
+      }),
+    ).rejects.toThrow(/summary claim/);
+  });
+
+  it("rejects an authored claim that just repeats the title", async () => {
+    const user = await ensureUser({
+      id: "agent",
+      name: "Agent",
+      email: "agent@localhost",
+      emailVerified: true,
+    });
+
+    await expect(
+      upsertReview({
+        origin: "authored",
+        title: "Harden the QR flow",
+        summary: "  harden the qr flow ",
+        repo: "fedibtc/credential-app",
+        branch: "codex/test",
+        content: credentialAppSeedReview,
+        idempotencyKey: "title-echo-key",
+        createdByUserId: user.id,
+      }),
+    ).rejects.toThrow(/more than the title/);
+  });
+
+  it("accepts an authored publish with a real claim, and a derived one without", async () => {
+    const user = await ensureUser({
+      id: "agent",
+      name: "Agent",
+      email: "agent@localhost",
+      emailVerified: true,
+    });
+
+    const authored = await upsertReview({
+      origin: "authored",
+      title: "Harden the QR flow",
+      summary:
+        "Retries no longer drop the shared offer; covered by property tests.",
+      repo: "fedibtc/credential-app",
+      branch: "codex/authored",
+      content: credentialAppSeedReview,
+      idempotencyKey: "authored-claim-key",
+      createdByUserId: user.id,
+    });
+    expect(authored.origin).toBe("authored");
+
+    const derived = await upsertReview({
+      origin: "derived",
+      title: "PR #1: mechanical recap",
+      repo: "fedibtc/credential-app",
+      branch: "codex/derived",
+      content: credentialAppSeedReview,
+      idempotencyKey: "derived-no-claim-key",
+      createdByUserId: user.id,
+    });
+    expect(derived.origin).toBe("derived");
+    expect(derived.summary).toBeNull();
   });
 });
 
