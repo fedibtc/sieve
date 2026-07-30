@@ -815,7 +815,7 @@ fn review_pr(client: &ApiClient) -> Result<Value> {
         }));
     }
     enrich_scaffold(&mut manifest, pr_number, &pr_title, &pr_url, &base_ref);
-    attach_full_patches(client, &mut manifest, &format!("origin/{base_ref}"), "HEAD");
+    attach_full_patches(client, &mut manifest, &format!("origin/{base_ref}"), "HEAD")?;
     // An unattended publish cannot stop to triage redaction findings the way
     // an agent running plain `publish` can, so token-looking spans in the
     // diff are masked instead of blocking the review.
@@ -1059,17 +1059,24 @@ fn enrich_scaffold(
     }
 }
 
-// Attach failures only cost the entry its patch ref; don't let them fail
-// the publish.
-fn attach_full_patches(client: &ApiClient, manifest: &mut Value, base: &str, head: &str) {
+// One failure only costs that entry its patch ref; zero attached means the store
+// is rejecting patches, so don't publish a review claiming evidence it lacks.
+fn attach_full_patches(
+    client: &ApiClient,
+    manifest: &mut Value,
+    base: &str,
+    head: &str,
+) -> Result<()> {
+    let mut attached = 0usize;
+    let mut first_failure: Option<String> = None;
     let Ok(files) = changed_files(base, head) else {
-        return;
+        return Ok(());
     };
     let Some(blocks) = manifest
         .pointer_mut("/content/blocks")
         .and_then(Value::as_array_mut)
     else {
-        return;
+        return Ok(());
     };
     for block in blocks {
         if block.get("type").and_then(Value::as_str) != Some("file-tree") {
@@ -1099,12 +1106,23 @@ fn attach_full_patches(client: &ApiClient, manifest: &mut Value, base: &str, hea
                 Ok(uploaded) => {
                     if let Some(id) = uploaded.get("attachmentId").and_then(Value::as_str) {
                         entry["patch"] = json!({ "attachmentId": id, "lines": lines });
+                        attached += 1;
                     }
                 }
-                Err(error) => eprintln!("skipping full patch for {path}: {error}"),
+                Err(error) => {
+                    eprintln!("skipping full patch for {path}: {error}");
+                    first_failure.get_or_insert_with(|| format!("{path}: {error}"));
+                }
             }
         }
     }
+
+    if attached == 0 {
+        if let Some(failure) = first_failure {
+            bail!("no full patch could be attached, so the review would carry no complete evidence. First failure was {failure}");
+        }
+    }
+    Ok(())
 }
 
 fn full_patch(base: &str, head: &str, file: &ChangedFile) -> Option<String> {
