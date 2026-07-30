@@ -680,6 +680,7 @@ fn scaffold(args: ScaffoldArgs) -> Result<Value> {
                 "path": file.path,
                 "head": args.head,
                 "summary": "Replace with why this new file matters",
+                "truncate": true,
                 "annotations": []
             }));
         } else {
@@ -691,6 +692,7 @@ fn scaffold(args: ScaffoldArgs) -> Result<Value> {
                 "base": args.base,
                 "head": args.head,
                 "summary": "Replace with what changed and why",
+                "truncate": true,
                 "annotations": []
             }));
         }
@@ -813,7 +815,15 @@ fn review_pr(client: &ApiClient) -> Result<Value> {
         }));
     }
     enrich_scaffold(&mut manifest, pr_number, &pr_title, &pr_url, &base_ref);
-    let published = publish_dropping_oversized(client, manifest)?;
+    attach_full_patches(client, &mut manifest, &format!("origin/{base_ref}"), "HEAD");
+    // An unattended publish cannot stop to triage redaction findings the way
+    // an agent running plain `publish` can, so token-looking spans in the
+    // diff are masked instead of blocking the review.
+    let options = PublishOptions {
+        redact: true,
+        ..PublishOptions::default()
+    };
+    let published = publish_manifest(client, manifest, options)?;
     let review_id = published
         .pointer("/review/id")
         .and_then(Value::as_str)
@@ -1049,63 +1059,81 @@ fn enrich_scaffold(
     }
 }
 
-// A single oversized evidence block fails the whole publish, so drop them
-// one at a time and retry; the file-tree still records every changed file.
-fn publish_dropping_oversized(client: &ApiClient, mut manifest: Value) -> Result<Value> {
-    // An unattended publish cannot stop to triage redaction findings the way
-    // an agent running plain `publish` can, so token-looking spans in the
-    // diff are masked instead of blocking the review.
-    let options = PublishOptions {
-        redact: true,
-        ..PublishOptions::default()
+// Attach failures only cost the entry its patch ref; don't let them fail
+// the publish.
+fn attach_full_patches(client: &ApiClient, manifest: &mut Value, base: &str, head: &str) {
+    let Ok(files) = changed_files(base, head) else {
+        return;
     };
-    for _ in 0..=MAX_KEY_DIFFS {
-        let error = match publish_manifest(client, manifest.clone(), options.clone()) {
-            Ok(published) => return Ok(published),
-            Err(error) => error,
-        };
-        let Some(path) = backtick_quoted(&error.to_string()) else {
-            return Err(error);
-        };
-        if !drop_evidence_block(&mut manifest, &path) {
-            return Err(error);
-        }
-        eprintln!("dropping oversized evidence block for {path}");
-    }
-    bail!("publish kept failing after dropping every oversized evidence block")
-}
-
-fn backtick_quoted(message: &str) -> Option<String> {
-    let start = message.find('`')? + 1;
-    let end = start + message[start..].find('`')?;
-    (start < end).then(|| message[start..end].to_string())
-}
-
-fn drop_evidence_block(manifest: &mut Value, path: &str) -> bool {
     let Some(blocks) = manifest
         .pointer_mut("/content/blocks")
         .and_then(Value::as_array_mut)
     else {
-        return false;
+        return;
     };
-    let is_evidence = |block: &Value| {
-        matches!(
-            block.get("type").and_then(Value::as_str),
-            Some("diff-ref") | Some("annotated-code-ref")
-        )
-    };
-    let before = blocks.len();
-    blocks.retain(|block| {
-        !(is_evidence(block) && block.get("path").and_then(Value::as_str) == Some(path))
-    });
-    if blocks.len() == before {
-        return false;
+    for block in blocks {
+        if block.get("type").and_then(Value::as_str) != Some("file-tree") {
+            continue;
+        }
+        let Some(entries) = block
+            .pointer_mut("/data/entries")
+            .and_then(Value::as_array_mut)
+        else {
+            continue;
+        };
+        for entry in entries {
+            let Some(path) = entry.get("path").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(file) = files.iter().find(|file| file.path == path) else {
+                continue;
+            };
+            if is_excluded_file(file) {
+                continue;
+            }
+            let Some(patch) = full_patch(base, head, file) else {
+                continue;
+            };
+            let lines = patch.lines().count();
+            match upload_patch(client, patch.into_bytes()) {
+                Ok(uploaded) => {
+                    if let Some(id) = uploaded.get("attachmentId").and_then(Value::as_str) {
+                        entry["patch"] = json!({ "attachmentId": id, "lines": lines });
+                    }
+                }
+                Err(error) => eprintln!("skipping full patch for {path}: {error}"),
+            }
+        }
     }
-    // With no evidence left the "Key changes" section would sit empty.
-    if !blocks.iter().any(is_evidence) {
-        blocks.retain(|block| block.get("id").and_then(Value::as_str) != Some("key-changes"));
+}
+
+fn full_patch(base: &str, head: &str, file: &ChangedFile) -> Option<String> {
+    let range = diff_range(base, head);
+    let output = if let Some(old_path) = &file.old_path {
+        git([
+            "diff",
+            "-M1%",
+            "--no-ext-diff",
+            &range,
+            "--",
+            old_path,
+            &file.path,
+        ])
+    } else {
+        git(["diff", "-M1%", "--no-ext-diff", &range, "--", &file.path])
     }
-    true
+    .ok()?;
+    if output.trim().is_empty() {
+        return None;
+    }
+    if output.len() as u64 > MAX_ATTACHMENT_BYTES {
+        eprintln!(
+            "full patch for {} exceeds the attachment cap; skipping",
+            file.path
+        );
+        return None;
+    }
+    Some(output)
 }
 
 fn feedback(client: &ApiClient, args: ReviewId) -> Result<Value> {
@@ -1194,11 +1222,20 @@ fn attach(client: &ApiClient, args: AttachArgs) -> Result<Value> {
     let data = fs::read(&args.file)?;
     if data.len() as u64 > MAX_ATTACHMENT_BYTES {
         bail!(
-            "{} exceeds {MAX_ATTACHMENT_BYTES} byte PNG limit",
+            "{} exceeds the {MAX_ATTACHMENT_BYTES} byte attachment limit",
             args.file.display()
         );
     }
-    upload_png(client, data)
+    if is_png(&data) {
+        return upload_png(client, data);
+    }
+    if std::str::from_utf8(&data).is_err() {
+        bail!(
+            "{} is neither a PNG nor UTF-8 text; only screenshots and text patches can be attached",
+            args.file.display()
+        );
+    }
+    upload_patch(client, data)
 }
 
 fn upload_png(client: &ApiClient, data: Vec<u8>) -> Result<Value> {
@@ -1213,11 +1250,28 @@ fn upload_png(client: &ApiClient, data: Vec<u8>) -> Result<Value> {
             "deduplicated": true,
         }));
     }
-    let uploaded = client.post_png("/api/attachments", data)?;
+    let uploaded = client.post_bytes("/api/attachments", data, "image/png")?;
     Ok(json!({
         "attachmentId": uploaded.get("id").cloned().unwrap_or(Value::Null),
         "width": uploaded.get("width").cloned().unwrap_or(json!(width)),
         "height": uploaded.get("height").cloned().unwrap_or(json!(height)),
+        "sha256": uploaded.get("sha256").cloned().unwrap_or(json!(sha256)),
+        "upload": uploaded,
+    }))
+}
+
+fn upload_patch(client: &ApiClient, data: Vec<u8>) -> Result<Value> {
+    let sha256 = hex::encode(Sha256::digest(&data));
+    if let Some(existing) = client.get_optional(&format!("/api/attachments/by-hash/{sha256}"))? {
+        return Ok(json!({
+            "attachmentId": existing.get("id").cloned().unwrap_or(Value::Null),
+            "sha256": sha256,
+            "deduplicated": true,
+        }));
+    }
+    let uploaded = client.post_bytes("/api/attachments", data, "text/x-patch")?;
+    Ok(json!({
+        "attachmentId": uploaded.get("id").cloned().unwrap_or(Value::Null),
         "sha256": uploaded.get("sha256").cloned().unwrap_or(json!(sha256)),
         "upload": uploaded,
     }))
@@ -1681,12 +1735,12 @@ impl ApiClient {
         )
     }
 
-    fn post_png(&self, path: &str, data: Vec<u8>) -> Result<Value> {
+    fn post_bytes(&self, path: &str, data: Vec<u8>, content_type: &str) -> Result<Value> {
         self.send(
             self.auth(
                 self.client
                     .post(self.url(path))
-                    .header("content-type", "image/png")
+                    .header("content-type", content_type)
                     .header("content-length", data.len().to_string())
                     .body(data),
             ),
@@ -1990,16 +2044,22 @@ fn expand_annotated_code_ref(block: Value) -> Result<Value> {
     if line_count == 0 {
         bail!("annotated-code-ref `{path}` did not produce text");
     }
+    let mut summary = block.get("summary").cloned().unwrap_or(Value::Null);
+    let mut lines = code.lines().collect::<Vec<_>>();
     if line_count > MAX_DIFF_LINES {
-        bail!(
-            "annotated-code-ref `{path}` has {line_count} lines; replace it with a focused annotated-code excerpt under {MAX_DIFF_LINES} lines"
-        );
+        if !wants_truncation(&block) {
+            bail!(
+                "annotated-code-ref `{path}` has {line_count} lines; replace it with a focused annotated-code excerpt under {MAX_DIFF_LINES} lines"
+            );
+        }
+        lines.truncate(MAX_DIFF_LINES);
+        summary = truncation_summary(&summary, MAX_DIFF_LINES, line_count);
     }
-    let excerpt = code.lines().collect::<Vec<_>>().join("\n");
+    let excerpt = lines.join("\n");
     Ok(json!({
         "id": block.get("id").cloned().unwrap_or(json!("annotated-code")),
         "type": "annotated-code",
-        "summary": block.get("summary").cloned().unwrap_or(Value::Null),
+        "summary": summary,
         "data": {
             "filename": path,
             "startLine": 1,
@@ -2007,6 +2067,21 @@ fn expand_annotated_code_ref(block: Value) -> Result<Value> {
             "annotations": block.get("annotations").cloned().unwrap_or(json!([]))
         }
     }))
+}
+
+fn wants_truncation(block: &Value) -> bool {
+    block
+        .get("truncate")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn truncation_summary(summary: &Value, kept: usize, total: usize) -> Value {
+    let suffix = format!("showing {kept} of {total} lines; full patch on the file entry");
+    match summary.as_str() {
+        Some(text) if !text.is_empty() => json!(format!("{text} ({suffix})")),
+        _ => json!(suffix),
+    }
 }
 
 fn expand_diff_ref(block: Value) -> Result<Value> {
@@ -2020,7 +2095,11 @@ fn expand_diff_ref(block: Value) -> Result<Value> {
         .and_then(Value::as_str)
         .unwrap_or("master");
     let head = block.get("head").and_then(Value::as_str).unwrap_or("HEAD");
-    let expanded = expanded_hunk_diff(base, head, old_path, path)?;
+    let expanded = expanded_hunk_diff(base, head, old_path, path, wants_truncation(&block))?;
+    let mut summary = block.get("summary").cloned().unwrap_or(Value::Null);
+    if let Some(truncation) = &expanded.truncation {
+        summary = truncation_summary(&summary, truncation.kept, truncation.total);
+    }
     let mut data = json!({
         "filename": path,
         "before": expanded.before_text,
@@ -2045,7 +2124,7 @@ fn expand_diff_ref(block: Value) -> Result<Value> {
     Ok(json!({
         "id": block.get("id").cloned().unwrap_or(json!("diff")),
         "type": "diff",
-        "summary": block.get("summary").cloned().unwrap_or(Value::Null),
+        "summary": summary,
         "data": data
     }))
 }
@@ -2055,6 +2134,12 @@ struct ExpandedDiff {
     after_text: String,
     before_start: usize,
     after_start: usize,
+    truncation: Option<Truncation>,
+}
+
+struct Truncation {
+    kept: usize,
+    total: usize,
 }
 
 #[derive(Debug)]
@@ -2076,6 +2161,7 @@ fn expanded_hunk_diff(
     head: &str,
     old_path: Option<&str>,
     path: &str,
+    truncate: bool,
 ) -> Result<ExpandedDiff> {
     let range = diff_range(base, head);
     let output = if let Some(old_path) = old_path {
@@ -2092,17 +2178,27 @@ fn expanded_hunk_diff(
     } else {
         git(["diff", "-M1%", "-U3", "--no-ext-diff", &range, "--", path])?
     };
-    let hunks = parse_diff_hunks(&output);
+    let mut hunks = parse_diff_hunks(&output);
+    if hunks.is_empty() {
+        bail!("diff-ref `{path}` did not produce hunks");
+    }
+    let expanded_line_count =
+        hunks.iter().map(|hunk| hunk.lines.len()).sum::<usize>() + hunks.len().saturating_sub(1);
+    let mut truncation = None;
+    if expanded_line_count > MAX_DIFF_LINES {
+        if !truncate {
+            bail!(
+                "diff-ref `{path}` expands to {expanded_line_count} lines; replace it with a focused literal diff under {MAX_DIFF_LINES} lines"
+            );
+        }
+        truncation = Some(Truncation {
+            kept: truncate_hunks(&mut hunks, MAX_DIFF_LINES),
+            total: expanded_line_count,
+        });
+    }
     let first = hunks
         .first()
         .ok_or_else(|| anyhow!("diff-ref `{path}` did not produce hunks"))?;
-    let expanded_line_count =
-        hunks.iter().map(|hunk| hunk.lines.len()).sum::<usize>() + hunks.len().saturating_sub(1);
-    if expanded_line_count > MAX_DIFF_LINES {
-        bail!(
-            "diff-ref `{path}` expands to {expanded_line_count} lines; replace it with a focused literal diff under {MAX_DIFF_LINES} lines"
-        );
-    }
     let mut before = Vec::new();
     let mut after = Vec::new();
     for hunk in &hunks {
@@ -2126,7 +2222,30 @@ fn expanded_hunk_diff(
         after_text: after.join("\n"),
         before_start: first.before_start,
         after_start: first.after_start,
+        truncation,
     })
+}
+
+// Keep whole hunks; an excerpt cut mid-hunk shows half an edit as if it
+// were the whole edit.
+fn truncate_hunks(hunks: &mut Vec<DiffHunk>, budget: usize) -> usize {
+    let mut kept_hunks = 0;
+    let mut kept_lines = 0;
+    for (index, hunk) in hunks.iter().enumerate() {
+        let separator = usize::from(index > 0);
+        if kept_lines + separator + hunk.lines.len() > budget {
+            break;
+        }
+        kept_lines += separator + hunk.lines.len();
+        kept_hunks += 1;
+    }
+    if kept_hunks == 0 {
+        hunks.truncate(1);
+        hunks[0].lines.truncate(budget);
+        return hunks[0].lines.len();
+    }
+    hunks.truncate(kept_hunks);
+    kept_lines
 }
 
 fn parse_diff_hunks(output: &str) -> Vec<DiffHunk> {
@@ -2640,6 +2759,10 @@ fn frame_comment(comment: &mut Value, thread_id: &str) {
 
 fn escape_fence_attr(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn is_png(data: &[u8]) -> bool {
+    data.len() >= 8 && &data[0..8] == b"\x89PNG\r\n\x1a\n"
 }
 
 fn png_dimensions(data: &[u8]) -> Result<(u32, u32)> {
@@ -3553,44 +3676,44 @@ mod tests {
         );
     }
 
-    #[test]
-    fn drop_evidence_block_removes_path_and_orphaned_section() {
-        let mut manifest = json!({ "content": { "blocks": [
-            { "id": "summary", "type": "rich-text", "data": { "markdown": "hi" } },
-            { "id": "key-changes", "type": "section", "data": { "title": "Key changes" } },
-            { "id": "key-1", "type": "diff-ref", "path": "big.ts", "summary": "s" },
-            { "id": "key-2", "type": "annotated-code-ref", "path": "new.ts", "summary": "s" },
-        ]}});
-        assert!(drop_evidence_block(&mut manifest, "big.ts"));
-        let blocks = manifest
-            .pointer("/content/blocks")
-            .and_then(Value::as_array)
-            .unwrap();
-        assert!(blocks
-            .iter()
-            .all(|block| block.get("path") != Some(&json!("big.ts"))));
-        assert!(blocks
-            .iter()
-            .any(|block| block["id"] == json!("key-changes")));
-        assert!(drop_evidence_block(&mut manifest, "new.ts"));
-        let blocks = manifest
-            .pointer("/content/blocks")
-            .and_then(Value::as_array)
-            .unwrap();
-        assert!(blocks
-            .iter()
-            .all(|block| block["id"] != json!("key-changes")));
-        assert!(!drop_evidence_block(&mut manifest, "gone.ts"));
+    fn context_hunk(start: usize, lines: usize) -> DiffHunk {
+        DiffHunk {
+            before_start: start,
+            after_start: start,
+            lines: (0..lines)
+                .map(|index| HunkLine::Context(format!("line {index}")))
+                .collect(),
+        }
     }
 
     #[test]
-    fn backtick_quoted_extracts_first_token() {
+    fn truncate_hunks_keeps_whole_hunks_within_budget() {
+        let mut hunks = vec![context_hunk(1, 4), context_hunk(20, 4), context_hunk(40, 4)];
+        let kept = truncate_hunks(&mut hunks, 9);
+        assert_eq!(kept, 9);
+        assert_eq!(hunks.len(), 2);
+        assert_eq!(hunks[1].lines.len(), 4);
+    }
+
+    #[test]
+    fn truncate_hunks_cuts_an_oversized_first_hunk() {
+        let mut hunks = vec![context_hunk(1, 50), context_hunk(90, 4)];
+        let kept = truncate_hunks(&mut hunks, 10);
+        assert_eq!(kept, 10);
+        assert_eq!(hunks.len(), 1);
+        assert_eq!(hunks[0].lines.len(), 10);
+    }
+
+    #[test]
+    fn truncation_summary_appends_to_existing_summary() {
         assert_eq!(
-            backtick_quoted("diff-ref `a/b.rs` expands to 200 lines"),
-            Some("a/b.rs".to_string())
+            truncation_summary(&json!("Diff: src/a.rs"), 150, 900),
+            json!("Diff: src/a.rs (showing 150 of 900 lines; full patch on the file entry)")
         );
-        assert_eq!(backtick_quoted("no ticks here"), None);
-        assert_eq!(backtick_quoted("empty `` ticks"), None);
+        assert_eq!(
+            truncation_summary(&Value::Null, 150, 900),
+            json!("showing 150 of 900 lines; full patch on the file entry")
+        );
     }
 
     #[test]
@@ -3722,6 +3845,54 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(error.contains("focused literal diff"));
+
+        let truncated = expand_annotated_code_ref(json!({
+            "id": "large",
+            "type": "annotated-code-ref",
+            "path": "large-new-file.ts",
+            "head": "HEAD",
+            "summary": "New file: large-new-file.ts",
+            "truncate": true,
+            "annotations": []
+        }))
+        .unwrap();
+        let code = truncated
+            .pointer("/data/code")
+            .and_then(Value::as_str)
+            .unwrap();
+        assert_eq!(code.lines().count(), MAX_DIFF_LINES);
+        assert_eq!(
+            truncated.get("summary").and_then(Value::as_str),
+            Some(
+                format!(
+                    "New file: large-new-file.ts (showing {MAX_DIFF_LINES} of {} lines; full patch on the file entry)",
+                    MAX_DIFF_LINES + 1
+                )
+                .as_str()
+            )
+        );
+
+        let truncated_diff = expand_diff_ref(json!({
+            "id": "large-diff",
+            "type": "diff-ref",
+            "path": "large-new-file.ts",
+            "base": "master",
+            "head": "HEAD",
+            "summary": "Diff: large-new-file.ts",
+            "truncate": true,
+            "annotations": []
+        }))
+        .unwrap();
+        let after = truncated_diff
+            .pointer("/data/after")
+            .and_then(Value::as_str)
+            .unwrap();
+        assert!(after.lines().count() <= MAX_DIFF_LINES);
+        assert!(truncated_diff
+            .get("summary")
+            .and_then(Value::as_str)
+            .unwrap()
+            .contains("full patch on the file entry"));
 
         env::set_current_dir(previous_dir).unwrap();
     }
