@@ -36,6 +36,11 @@ const calloutBlockSchema = z.object({
   }),
 });
 
+const patchRefSchema = z.object({
+  attachmentId: z.string().min(1),
+  lines: z.number().int().positive(),
+});
+
 const fileTreeBlockSchema = z.object({
   id: z.string().min(1),
   type: z.literal("file-tree"),
@@ -49,6 +54,7 @@ const fileTreeBlockSchema = z.object({
           additions: z.number().int().nonnegative().optional(),
           deletions: z.number().int().nonnegative().optional(),
           note: z.string().optional(),
+          patch: patchRefSchema.optional(),
         }),
       )
       .min(1),
@@ -345,12 +351,22 @@ export type ReviewBlock = z.infer<typeof blockSchema>;
 export function collectAttachmentIds(document: ReviewDocument) {
   const ids = new Set<string>();
   for (const block of document.blocks) {
-    if (block.type !== "image-diff") {
-      continue;
+    if (block.type === "image-diff") {
+      for (const ref of [
+        block.data.before,
+        block.data.after,
+        block.data.diff,
+      ]) {
+        if (ref) {
+          ids.add(ref.attachmentId);
+        }
+      }
     }
-    for (const ref of [block.data.before, block.data.after, block.data.diff]) {
-      if (ref) {
-        ids.add(ref.attachmentId);
+    if (block.type === "file-tree") {
+      for (const entry of block.data.entries) {
+        if (entry.patch) {
+          ids.add(entry.patch.attachmentId);
+        }
       }
     }
   }

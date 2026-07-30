@@ -256,6 +256,25 @@
                             },
                             "note": {
                               "type": "string"
+                            },
+                            "patch": {
+                              "type": "object",
+                              "properties": {
+                                "attachmentId": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "lines": {
+                                  "type": "integer",
+                                  "exclusiveMinimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "attachmentId",
+                                "lines"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [
