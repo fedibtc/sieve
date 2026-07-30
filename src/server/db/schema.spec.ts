@@ -10,5 +10,7 @@ describe("M1 schema", () => {
     expect(agentSessions.workspacePath.name).toBe("workspace_path");
     expect(attachments.sha256.name).toBe("sha256");
     expect(attachments.data.name).toBe("data");
+    expect(attachments.storageKey.name).toBe("storage_key");
+    expect(attachments.status.name).toBe("status");
   });
 });

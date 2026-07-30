@@ -19,7 +19,9 @@ use std::{
 mod policy;
 
 const DEFAULT_HOST: &str = "https://sieve.fedi.xyz";
-const MAX_ATTACHMENT_BYTES: u64 = 2_000_000;
+const MAX_ATTACHMENT_BYTES: u64 = 250_000_000;
+// Patches go through the direct upload route, which the server caps at 2 MB.
+const MAX_PATCH_BYTES: u64 = 2_000_000;
 const MAX_KEY_DIFFS: usize = 5;
 const MAX_DIFF_LINES: usize = 150;
 const MAX_BLOCKS: usize = 120;
@@ -1219,48 +1221,121 @@ fn session(client: &ApiClient, command: SessionSubcommand) -> Result<Value> {
 }
 
 fn attach(client: &ApiClient, args: AttachArgs) -> Result<Value> {
-    let data = fs::read(&args.file)?;
-    if data.len() as u64 > MAX_ATTACHMENT_BYTES {
+    let bytes = fs::metadata(&args.file)?.len();
+    if bytes > MAX_ATTACHMENT_BYTES {
         bail!(
             "{} exceeds the {MAX_ATTACHMENT_BYTES} byte attachment limit",
             args.file.display()
         );
     }
-    if is_png(&data) {
-        return upload_png(client, data);
-    }
-    if std::str::from_utf8(&data).is_err() {
-        bail!(
-            "{} is neither a PNG nor UTF-8 text; only screenshots and text patches can be attached",
-            args.file.display()
-        );
-    }
-    upload_patch(client, data)
+    let data = fs::read(&args.file)?;
+    let filename = args
+        .file
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| anyhow!("attachment filename is not valid UTF-8"))?
+        .to_string();
+    let Some(mime_type) = media_mime_type(&args.file, &data) else {
+        if std::str::from_utf8(&data).is_err() {
+            bail!(
+                "{} is not a screenshot, a recording, or UTF-8 text",
+                args.file.display()
+            );
+        }
+        return upload_patch(client, data);
+    };
+    upload_media(client, data, &filename, mime_type)
 }
 
-fn upload_png(client: &ApiClient, data: Vec<u8>) -> Result<Value> {
-    let (width, height) = png_dimensions(&data)?;
+fn media_mime_type(path: &Path, data: &[u8]) -> Option<&'static str> {
+    if is_png(data) {
+        return Some("image/png");
+    }
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("webm") => Some("video/webm"),
+        Some("mp4") => Some("video/mp4"),
+        _ => None,
+    }
+}
+
+fn upload_media(
+    client: &ApiClient,
+    data: Vec<u8>,
+    filename: &str,
+    mime_type: &'static str,
+) -> Result<Value> {
+    let (width, height) = if mime_type == "image/png" {
+        let (width, height) = png_dimensions(&data)?;
+        (Some(width), Some(height))
+    } else {
+        (None, None)
+    };
     let sha256 = hex::encode(Sha256::digest(&data));
     if let Some(existing) = client.get_optional(&format!("/api/attachments/by-hash/{sha256}"))? {
         return Ok(json!({
             "attachmentId": existing.get("id").cloned().unwrap_or(Value::Null),
             "width": existing.get("width").cloned().unwrap_or(json!(width)),
             "height": existing.get("height").cloned().unwrap_or(json!(height)),
+            "mimeType": existing.get("mimeType").cloned().unwrap_or(json!(mime_type)),
             "sha256": sha256,
             "deduplicated": true,
         }));
     }
-    let uploaded = client.post_bytes("/api/attachments", data, "image/png")?;
+    let reservation = client.post(
+        "/api/attachments/uploads",
+        json!({
+            "sha256": sha256,
+            "mimeType": mime_type,
+            "bytes": data.len(),
+            "originalFilename": filename,
+            "width": width,
+            "height": height,
+        }),
+    )?;
+    if reservation
+        .get("existing")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Ok(json!({
+            "attachmentId": reservation.get("id").cloned().unwrap_or(Value::Null),
+            "width": reservation.get("width").cloned().unwrap_or(Value::Null),
+            "height": reservation.get("height").cloned().unwrap_or(Value::Null),
+            "mimeType": reservation.get("mimeType").cloned().unwrap_or(json!(mime_type)),
+            "sha256": reservation.get("sha256").cloned().unwrap_or(json!(sha256)),
+            "deduplicated": true,
+        }));
+    }
+    let attachment_id = required_string(&reservation, "/id")?;
+    let upload_url = required_string(&reservation, "/upload/uploadUrl")?;
+    let requires_auth = reservation
+        .pointer("/upload/requiresAuth")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    client.put_bytes(upload_url, mime_type, data, requires_auth)?;
+    let uploaded = client.post(
+        &format!("/api/attachments/uploads/{attachment_id}/complete"),
+        json!({}),
+    )?;
     Ok(json!({
         "attachmentId": uploaded.get("id").cloned().unwrap_or(Value::Null),
-        "width": uploaded.get("width").cloned().unwrap_or(json!(width)),
-        "height": uploaded.get("height").cloned().unwrap_or(json!(height)),
+        "width": uploaded.get("width").cloned().unwrap_or(Value::Null),
+        "height": uploaded.get("height").cloned().unwrap_or(Value::Null),
+        "mimeType": uploaded.get("mimeType").cloned().unwrap_or(json!(mime_type)),
         "sha256": uploaded.get("sha256").cloned().unwrap_or(json!(sha256)),
         "upload": uploaded,
     }))
 }
 
 fn upload_patch(client: &ApiClient, data: Vec<u8>) -> Result<Value> {
+    if data.len() as u64 > MAX_PATCH_BYTES {
+        bail!("patch exceeds the {MAX_PATCH_BYTES} byte limit");
+    }
     let sha256 = hex::encode(Sha256::digest(&data));
     if let Some(existing) = client.get_optional(&format!("/api/attachments/by-hash/{sha256}"))? {
         return Ok(json!({
@@ -1745,6 +1820,31 @@ impl ApiClient {
                     .body(data),
             ),
         )
+    }
+
+    fn put_bytes(
+        &self,
+        url: &str,
+        mime_type: &str,
+        data: Vec<u8>,
+        requires_auth: bool,
+    ) -> Result<()> {
+        let request = self
+            .client
+            .put(url)
+            .header("content-type", mime_type)
+            .header("content-length", data.len().to_string())
+            .body(data);
+        let request = if requires_auth {
+            self.auth(request)
+        } else {
+            request
+        };
+        let (status, value) = self.send_response(request)?;
+        if !(200..300).contains(&status) {
+            bail!("attachment upload returned {status}: {value}");
+        }
+        Ok(())
     }
 
     fn auth(&self, request: RequestBuilder) -> RequestBuilder {
@@ -3187,6 +3287,36 @@ mod tests {
     }
 
     #[test]
+    fn accepts_supported_attachment_extensions() {
+        use base64::Engine;
+        let png = base64::engine::general_purpose::STANDARD
+            .decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+        )
+        .unwrap();
+        // A screenshot is recognized by its bytes, so the extension can lie.
+        assert_eq!(
+            media_mime_type(Path::new("capture.bin"), &png),
+            Some("image/png")
+        );
+        assert_eq!(
+            media_mime_type(Path::new("capture.webm"), b"binary"),
+            Some("video/webm")
+        );
+        assert_eq!(
+            media_mime_type(Path::new("capture.MP4"), b"binary"),
+            Some("video/mp4")
+        );
+        assert_eq!(media_mime_type(Path::new("capture.mov"), b"binary"), None);
+    }
+
+    #[test]
+    fn treats_unrecognized_media_as_patch_candidates() {
+        assert_eq!(media_mime_type(Path::new("change.patch"), b"--- a/x"), None);
+        assert_eq!(media_mime_type(Path::new("notes.txt"), b"hello"), None);
+    }
+
+    #[test]
     fn finds_and_redacts_token_like_strings() {
         let mut value = json!({
             "content": {
@@ -3607,6 +3737,7 @@ mod tests {
             "valid-callout.json",
             "valid-image-diff.json",
             "valid-rich-text.json",
+            "valid-screen-recording.json",
             "valid-section.json",
         ] {
             let fixture = read_block_fixture(name);
