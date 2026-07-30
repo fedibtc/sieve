@@ -6,6 +6,13 @@ test("seeded reviewer journey composes read-only interactions", async ({
 }) => {
   await page.goto("/reviews/seed-credential-app-qr");
 
+  // The seeded review is authored: the header renders the summary claim
+  // under the title and names the agent in the origin badge.
+  await expect(
+    page.getByText(/Seeded M2 recap from credential-app/),
+  ).toBeVisible();
+  await expect(page.getByText("codex", { exact: true })).toBeVisible();
+
   await expect(page.getByRole("heading", { name: "Outcome" })).toBeVisible();
   await expect(
     page.getByText(/QR\/property coverage, adds Playwright harness checks/),

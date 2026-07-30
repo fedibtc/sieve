@@ -696,6 +696,9 @@ fn scaffold(args: ScaffoldArgs) -> Result<Value> {
     }
     let manifest = json!({
         "title": format!("{repo}: {branch}"),
+        // A fresh scaffold is mechanical output; an author who fills in the
+        // blocks flips this to "authored" and writes the summary claim.
+        "origin": "derived",
         "repo": repo,
         "branch": branch,
         "baseRef": args.base,
@@ -723,6 +726,7 @@ fn publish_manifest(
     mut manifest: Value,
     options: PublishOptions,
 ) -> Result<Value> {
+    require_origin(&manifest)?;
     let mut warnings = schema_drift_warnings(client);
     let policy = policy::discover();
     warnings.extend(policy.warnings());
@@ -853,6 +857,73 @@ fn manifest_has_changes(manifest: &Value) -> bool {
         })
 }
 
+// The server refuses a publish without an origin, and failing here saves a
+// round trip and keeps --dry-run honest about what would happen.
+fn require_origin(manifest: &Value) -> Result<()> {
+    match manifest.get("origin").and_then(Value::as_str) {
+        Some("authored") | Some("derived") => Ok(()),
+        _ => bail!(
+            "manifest must set \"origin\" to \"authored\" or \"derived\": scaffold emits \"derived\"; switch it to \"authored\" once the recap is written by hand"
+        ),
+    }
+}
+
+// The claim is arithmetic on the diff the scaffold already recorded in the
+// file-tree block, so it can state scope and concentration and nothing else.
+fn derive_claim(manifest: &Value, base_ref: &str) -> Option<String> {
+    let entries = manifest
+        .pointer("/content/blocks")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|block| block.get("type").and_then(Value::as_str) == Some("file-tree"))?
+        .pointer("/data/entries")
+        .and_then(Value::as_array)?;
+    if entries.is_empty() {
+        return None;
+    }
+    let mut additions = 0u64;
+    let mut deletions = 0u64;
+    let mut areas: Vec<(String, usize, u64)> = vec![];
+    for entry in entries {
+        let path = entry.get("path").and_then(Value::as_str).unwrap_or("");
+        let added = entry.get("additions").and_then(Value::as_u64).unwrap_or(0);
+        let deleted = entry.get("deletions").and_then(Value::as_u64).unwrap_or(0);
+        additions += added;
+        deletions += deleted;
+        let area = match path.split_once('/') {
+            Some((first, rest)) => match rest.split_once('/') {
+                Some((second, _)) => format!("{first}/{second}"),
+                None => first.to_string(),
+            },
+            None => "the repo root".to_string(),
+        };
+        match areas.iter_mut().find(|(name, _, _)| *name == area) {
+            Some((_, files, churn)) => {
+                *files += 1;
+                *churn += added + deleted;
+            }
+            None => areas.push((area, 1, added + deleted)),
+        }
+    }
+    let scope = if entries.len() == 1 {
+        let path = entries[0].get("path").and_then(Value::as_str).unwrap_or("");
+        format!("1 file changed, +{additions} -{deletions}: {path}.")
+    } else {
+        areas.sort_by_key(|(_, _, churn)| std::cmp::Reverse(*churn));
+        let spread = areas
+            .iter()
+            .take(2)
+            .map(|(name, files, _)| format!("{name} ({files})"))
+            .collect::<Vec<_>>()
+            .join(" and ");
+        format!(
+            "{} files changed, +{additions} -{deletions}, concentrated in {spread}.",
+            entries.len()
+        )
+    };
+    Some(format!("{scope} Diff against {base_ref}."))
+}
+
 // The scaffold only knows repo and branch, so the PR linkage and the
 // placeholder block summaries are filled in from PR metadata here.
 fn enrich_scaffold(
@@ -865,6 +936,9 @@ fn enrich_scaffold(
     manifest["title"] = json!(format!("PR #{pr_number}: {pr_title}"));
     manifest["prNumber"] = json!(pr_number);
     manifest["prUrl"] = json!(pr_url);
+    if let Some(claim) = derive_claim(manifest, base_ref) {
+        manifest["summary"] = json!(claim);
+    }
     let summary = format!(
         "## Sieve review\n\nAuto-published review surface for {pr_url} (diff vs `{base_ref}`). Blocks below are generated mechanically from the PR diff."
     );
@@ -2761,6 +2835,55 @@ mod tests {
 
     static CWD_LOCK: Mutex<()> = Mutex::new(());
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn publish_requires_an_origin() {
+        assert!(require_origin(&json!({ "origin": "authored" })).is_ok());
+        assert!(require_origin(&json!({ "origin": "derived" })).is_ok());
+        let missing = require_origin(&json!({ "title": "x" })).unwrap_err();
+        assert!(missing.to_string().contains("\"origin\""));
+        let invalid = require_origin(&json!({ "origin": "generated" })).unwrap_err();
+        assert!(invalid.to_string().contains("\"origin\""));
+    }
+
+    #[test]
+    fn derives_a_claim_from_the_file_tree() {
+        let manifest = json!({
+            "content": { "version": 1, "blocks": [
+                { "id": "files", "type": "file-tree", "data": { "entries": [
+                    { "path": "src/app/page.tsx", "change": "modified", "additions": 120, "deletions": 40 },
+                    { "path": "src/app/layout.tsx", "change": "modified", "additions": 60, "deletions": 10 },
+                    { "path": "scripts/ci/run.sh", "change": "added", "additions": 30, "deletions": 0 },
+                ] } }
+            ] }
+        });
+        assert_eq!(
+            derive_claim(&manifest, "master").as_deref(),
+            Some("3 files changed, +210 -50, concentrated in src/app (2) and scripts/ci (1). Diff against master.")
+        );
+    }
+
+    #[test]
+    fn derives_a_single_file_claim_and_skips_an_empty_tree() {
+        let single = json!({
+            "content": { "version": 1, "blocks": [
+                { "id": "files", "type": "file-tree", "data": { "entries": [
+                    { "path": "README.md", "change": "modified", "additions": 4, "deletions": 1 },
+                ] } }
+            ] }
+        });
+        assert_eq!(
+            derive_claim(&single, "main").as_deref(),
+            Some("1 file changed, +4 -1: README.md. Diff against main.")
+        );
+
+        let empty = json!({
+            "content": { "version": 1, "blocks": [
+                { "id": "files", "type": "file-tree", "data": { "entries": [] } }
+            ] }
+        });
+        assert_eq!(derive_claim(&empty, "main"), None);
+    }
 
     #[test]
     fn resolves_production_and_development_hosts() {

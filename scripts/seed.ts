@@ -34,6 +34,7 @@ async function main() {
     title: "Credential-app QR property coverage",
     summary:
       "Seeded M2 recap from credential-app master...codex/property-qr-tests.",
+    origin: "authored",
     repo: "fedibtc/credential-app",
     branch: "codex/property-qr-tests",
     baseRef: "master",

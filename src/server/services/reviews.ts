@@ -57,6 +57,7 @@ export async function upsertReview(input: {
   id?: string;
   title: string;
   summary?: string | null;
+  origin: "authored" | "derived";
   repo: string;
   branch: string;
   baseRef?: string | null;
@@ -69,6 +70,7 @@ export async function upsertReview(input: {
   agentName?: string | null;
   changeNote?: string | null;
 }) {
+  assertClaim(input);
   const content = reviewDocumentSchema.parse(input.content);
   await assertAttachmentsExist(content);
   const prNumber = input.prNumber ?? inferPrNumber(input.prUrl) ?? null;
@@ -86,6 +88,7 @@ export async function upsertReview(input: {
       .set({
         title: input.title,
         summary: input.summary ?? null,
+        origin: input.origin,
         repo: input.repo,
         branch: input.branch,
         baseRef: input.baseRef ?? null,
@@ -124,6 +127,7 @@ export async function upsertReview(input: {
       id: input.id,
       title: input.title,
       summary: input.summary ?? null,
+      origin: input.origin,
       repo: input.repo,
       branch: input.branch,
       baseRef: input.baseRef ?? null,
@@ -152,6 +156,29 @@ export async function upsertReview(input: {
     actorUserId: input.createdByUserId,
   });
   return created;
+}
+
+// The claim gate runs here rather than in the CLI so no publish path can
+// skip it: the API and MCP routes both land in upsertReview.
+function assertClaim(input: {
+  origin: "authored" | "derived";
+  title: string;
+  summary?: string | null;
+}) {
+  if (input.origin !== "authored") {
+    return;
+  }
+  const claim = input.summary?.trim() ?? "";
+  if (!claim) {
+    throw new Error(
+      'An authored review must carry a summary claim: one sentence stating what changed and why it is safe or risky. Publish with origin "derived" if this recap was generated mechanically.',
+    );
+  }
+  if (claim.toLowerCase() === input.title.trim().toLowerCase()) {
+    throw new Error(
+      "The summary claim must say more than the title. State the finding, not the topic.",
+    );
+  }
 }
 
 async function assertAttachmentsExist(content: ReviewDocument) {

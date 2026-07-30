@@ -12,19 +12,31 @@ test("list filters, row navigation, relative time, and open-agent count", async 
   await expect(seededRow).toBeVisible();
   await expect(seededRow).toContainText("fedibtc/credential-app");
   await expect(seededRow).toContainText("open");
+  // The seeded review is authored, so its origin badge names the agent.
+  await expect(seededRow).toContainText("codex");
 
   const fixture = await publishFixtureReview(request, {
     title: "Other repo filter target",
     repo: "e2e/other",
+    origin: "derived",
   });
   await addBrowserComment(request, fixture.review.id, {
     message: "Needs agent follow-up",
     resolutionTarget: "agent",
   });
   await page.reload();
+  const derivedRow = page.getByRole("link", {
+    name: /Other repo filter target/,
+  });
+  await expect(derivedRow).toContainText(/1/);
+  await expect(derivedRow).toContainText("derived");
+
+  await page.goto(`/reviews/${fixture.review.id}`);
+  await expect(page.getByText("derived from the diff")).toBeVisible();
   await expect(
-    page.getByRole("link", { name: /Other repo filter target/ }),
-  ).toContainText(/1/);
+    page.getByText("E2E fixture review", { exact: true }),
+  ).toBeVisible();
+  await page.goto("/reviews");
 
   await page.getByPlaceholder("Filter repo").fill("e2e/other");
   await page.getByRole("button", { name: "Filter" }).click();

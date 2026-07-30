@@ -16,6 +16,7 @@ export async function publishFixtureReview(
     repo?: string;
     blocks?: ReviewBlock[];
     idempotencyKey?: string;
+    origin?: "authored" | "derived";
   } = {},
 ) {
   const key = input.idempotencyKey ?? `e2e:${nanoid()}`;
@@ -23,6 +24,7 @@ export async function publishFixtureReview(
     data: {
       title: input.title ?? `E2E review ${key}`,
       summary: "E2E fixture review",
+      origin: input.origin ?? "authored",
       repo: input.repo ?? "e2e/review-helper",
       branch: "codex/e2e",
       baseRef: "main",

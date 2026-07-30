@@ -20,6 +20,13 @@
         }
       ]
     },
+    "origin": {
+      "type": "string",
+      "enum": [
+        "authored",
+        "derived"
+      ]
+    },
     "repo": {
       "type": "string",
       "minLength": 1
@@ -920,6 +927,7 @@
   },
   "required": [
     "title",
+    "origin",
     "repo",
     "branch",
     "content",

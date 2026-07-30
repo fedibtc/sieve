@@ -282,6 +282,7 @@ function agentRequest(path: string, init?: RequestInit) {
 function reviewPayload() {
   return {
     title: "Agent route recap",
+    origin: "derived",
     repo: "fedibtc/credential-app",
     branch: "codex/demo",
     idempotencyKey: "fedibtc/credential-app#codex/demo",
