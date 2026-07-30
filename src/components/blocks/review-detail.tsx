@@ -930,6 +930,8 @@ function BlockRenderer({
           compactWithPrevious={compactWithPrevious}
         />
       );
+    case "change-shape":
+      return <ChangeShapeBlock block={block} />;
     case "mermaid":
       return (
         <MermaidBlock source={block.data.source} caption={block.data.caption} />
@@ -1107,6 +1109,59 @@ function StatusBadge({
     >
       {status.replace("_", " ")}
     </Badge>
+  );
+}
+
+function ChangeShapeBlock({
+  block,
+}: {
+  block: Extract<ReviewBlock, { type: "change-shape" }>;
+}) {
+  const areas = block.data.areas;
+  const maxChurn = Math.max(
+    ...areas.map((area) => area.additions + area.deletions),
+    1,
+  );
+  return (
+    <div className="overflow-hidden rounded-lg border bg-card">
+      {areas.map((area) => {
+        const churn = area.additions + area.deletions;
+        // Bars are proportional to each area's churn share, with a floor so
+        // a tiny area still renders a visible sliver.
+        const width = Math.max((churn / maxChurn) * 100, 2);
+        const addedShare = churn > 0 ? (area.additions / churn) * 100 : 100;
+        return (
+          <div
+            key={area.area}
+            className="flex items-center gap-3 border-b px-3 py-2 text-sm last:border-b-0"
+          >
+            <span className="w-44 shrink-0 truncate font-mono sm:w-56">
+              {area.area}
+            </span>
+            <ChangeBadge change={area.change} />
+            <span className="w-14 shrink-0 text-xs text-muted-foreground">
+              {area.files} {area.files === 1 ? "file" : "files"}
+            </span>
+            <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+              <div
+                className="flex h-full overflow-hidden rounded-full"
+                style={{ width: `${width}%` }}
+              >
+                <div
+                  className="h-full bg-emerald-500/80"
+                  style={{ width: `${addedShare}%` }}
+                />
+                <div className="h-full flex-1 bg-red-500/70" />
+              </div>
+            </div>
+            <span className="shrink-0 font-mono text-xs">
+              <span className="text-emerald-700">+{area.additions}</span>{" "}
+              <span className="text-red-700">-{area.deletions}</span>
+            </span>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

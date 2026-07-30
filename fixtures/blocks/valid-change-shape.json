@@ -1,0 +1,31 @@
+{
+  "expect": "valid",
+  "document": {
+    "version": 1,
+    "blocks": [
+      {
+        "id": "shape",
+        "type": "change-shape",
+        "summary": "Where the change lands",
+        "data": {
+          "areas": [
+            {
+              "area": "src/app",
+              "files": 4,
+              "additions": 220,
+              "deletions": 60,
+              "change": "modified"
+            },
+            {
+              "area": "scripts/ci",
+              "files": 1,
+              "additions": 30,
+              "deletions": 0,
+              "change": "added"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
