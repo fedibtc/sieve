@@ -19,9 +19,12 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
+  const contentType = attachment.mimeType.startsWith("text/")
+    ? `${attachment.mimeType}; charset=utf-8`
+    : attachment.mimeType;
   return new Response(Buffer.from(attachment.data), {
     headers: {
-      "content-type": attachment.mimeType,
+      "content-type": contentType,
       "content-length": String(attachment.bytes),
       "cache-control": "private, max-age=31536000, immutable",
       "x-content-type-options": "nosniff",

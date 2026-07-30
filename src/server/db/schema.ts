@@ -249,8 +249,8 @@ export const attachments = pgTable(
     sha256: text("sha256").notNull(),
     mimeType: text("mime_type").notNull(),
     bytes: integer("bytes").notNull(),
-    width: integer("width").notNull(),
-    height: integer("height").notNull(),
+    width: integer("width"),
+    height: integer("height"),
     data: bytea("data").notNull(),
     createdByUserId: text("created_by_user_id")
       .notNull()

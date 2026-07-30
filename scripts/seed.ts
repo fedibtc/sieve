@@ -113,9 +113,12 @@ async function createSeedVisualAttachments(createdByUserId: string) {
 
 function attachmentRef(attachment: {
   id: string;
-  width: number;
-  height: number;
+  width: number | null;
+  height: number | null;
 }) {
+  if (attachment.width === null || attachment.height === null) {
+    throw new Error("seed attachments are PNGs and always carry dimensions");
+  }
   return {
     attachmentId: attachment.id,
     width: attachment.width,
