@@ -43,6 +43,13 @@
       "when": 1785363889412,
       "tag": "0005_aromatic_ego",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785422981678,
+      "tag": "0006_tough_fallen_one",
+      "breakpoints": true
     }
   ]
 }

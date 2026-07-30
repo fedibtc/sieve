@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { resetDbForTests } from "@/server/db/client";
 import { credentialAppSeedReview } from "@/shared/fixtures";
-import { createPngAttachment } from "./attachments";
+import { createPatchAttachment, createPngAttachment } from "./attachments";
 import { createComment } from "./comments";
 import { listReviews, updateReviewStatus, upsertReview } from "./reviews";
 import { ensureUser } from "./users";
@@ -204,6 +204,42 @@ describe("review service", () => {
     ).rejects.toThrow(/Unknown attachmentId/);
   });
 
+  it("validates file-tree patch refs against stored attachments", async () => {
+    const user = await ensureUser({
+      id: "agent",
+      name: "Agent",
+      email: "agent@localhost",
+      emailVerified: true,
+    });
+
+    await expect(
+      upsertReview({
+        origin: "derived",
+        title: "Dangling patch",
+        repo: "fedibtc/credential-app",
+        branch: "codex/test",
+        content: fileTreePatchDocument("missing-patch"),
+        idempotencyKey: "dangling-patch-key",
+        createdByUserId: user.id,
+      }),
+    ).rejects.toThrow(/Unknown attachmentId/);
+
+    const patch = await createPatchAttachment({
+      data: Buffer.from("--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n"),
+      createdByUserId: user.id,
+    });
+    const review = await upsertReview({
+      origin: "derived",
+      title: "Stored patch",
+      repo: "fedibtc/credential-app",
+      branch: "codex/test",
+      content: fileTreePatchDocument(patch.attachment.id),
+      idempotencyKey: "stored-patch-key",
+      createdByUserId: user.id,
+    });
+    expect(review.id).toBeTruthy();
+  });
+
   it("accepts image-diff blocks with stored attachment ids", async () => {
     const user = await ensureUser({
       id: "agent",
@@ -349,6 +385,29 @@ function imageDiffDocument(ids: {
           before: { attachmentId: ids.before, width: 1, height: 1 },
           after: { attachmentId: ids.after, width: 1, height: 1 },
           diff: { attachmentId: ids.diff, width: 1, height: 1 },
+        },
+      },
+    ],
+  };
+}
+
+function fileTreePatchDocument(attachmentId: string) {
+  return {
+    version: 1 as const,
+    blocks: [
+      {
+        id: "files",
+        type: "file-tree" as const,
+        data: {
+          entries: [
+            {
+              path: "src/x.ts",
+              change: "modified" as const,
+              additions: 1,
+              deletions: 1,
+              patch: { attachmentId, lines: 5 },
+            },
+          ],
         },
       },
     ],

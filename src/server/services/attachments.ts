@@ -4,6 +4,7 @@ import { getDb } from "@/server/db/client";
 import { attachments } from "@/server/db/schema";
 
 export const MAX_ATTACHMENT_BYTES = 2_000_000;
+export const PATCH_MIME_TYPE = "text/x-patch";
 const PNG_SIGNATURE = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
 ]);
@@ -13,6 +14,34 @@ export async function createPngAttachment(input: {
   createdByUserId: string;
 }) {
   const parsed = parsePng(input.data);
+  return upsertAttachment({
+    ...input,
+    mimeType: "image/png",
+    width: parsed.width,
+    height: parsed.height,
+  });
+}
+
+export async function createPatchAttachment(input: {
+  data: Buffer;
+  createdByUserId: string;
+}) {
+  parsePatch(input.data);
+  return upsertAttachment({
+    ...input,
+    mimeType: PATCH_MIME_TYPE,
+    width: null,
+    height: null,
+  });
+}
+
+async function upsertAttachment(input: {
+  data: Buffer;
+  createdByUserId: string;
+  mimeType: string;
+  width: number | null;
+  height: number | null;
+}) {
   const sha256 = createHash("sha256").update(input.data).digest("hex");
   const db = await getDb();
   const [existing] = await db
@@ -28,10 +57,10 @@ export async function createPngAttachment(input: {
     .insert(attachments)
     .values({
       sha256,
-      mimeType: "image/png",
+      mimeType: input.mimeType,
       bytes: input.data.byteLength,
-      width: parsed.width,
-      height: parsed.height,
+      width: input.width,
+      height: input.height,
       data: input.data,
       createdByUserId: input.createdByUserId,
     })
@@ -104,12 +133,27 @@ export function parsePng(data: Buffer) {
   return { width, height };
 }
 
+export function parsePatch(data: Buffer) {
+  if (data.byteLength > MAX_ATTACHMENT_BYTES) {
+    throw new Error("Attachment exceeds the 2 MB limit");
+  }
+  if (data.byteLength === 0) {
+    throw new Error("Patch attachments cannot be empty");
+  }
+  const text = new TextDecoder("utf-8", { fatal: true });
+  try {
+    text.decode(data);
+  } catch {
+    throw new Error("Patch attachments must be valid UTF-8 text");
+  }
+}
+
 export function attachmentResponse(attachment: {
   id: string;
   sha256: string;
   bytes: number;
-  width: number;
-  height: number;
+  width: number | null;
+  height: number | null;
   mimeType: string;
 }) {
   return {

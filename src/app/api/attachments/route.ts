@@ -2,8 +2,10 @@ import { NextResponse } from "next/server";
 import { authenticateRequest } from "@/server/auth-middleware";
 import {
   attachmentResponse,
+  createPatchAttachment,
   createPngAttachment,
   MAX_ATTACHMENT_BYTES,
+  PATCH_MIME_TYPE,
 } from "@/server/services/attachments";
 
 export const dynamic = "force-dynamic";
@@ -16,9 +18,9 @@ export async function POST(request: Request) {
   }
 
   const contentType = request.headers.get("content-type")?.split(";")[0];
-  if (contentType !== "image/png") {
+  if (contentType !== "image/png" && contentType !== PATCH_MIME_TYPE) {
     return NextResponse.json(
-      { error: "Only image/png uploads are supported" },
+      { error: `Only image/png and ${PATCH_MIME_TYPE} uploads are supported` },
       { status: 415 },
     );
   }
@@ -40,7 +42,11 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { attachment, existing } = await createPngAttachment({
+    const create =
+      contentType === PATCH_MIME_TYPE
+        ? createPatchAttachment
+        : createPngAttachment;
+    const { attachment, existing } = await create({
       data,
       createdByUserId: auth.user.id,
     });

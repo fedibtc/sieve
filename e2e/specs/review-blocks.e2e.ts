@@ -2,6 +2,7 @@ import {
   allBlockTypes,
   maliciousMermaid,
   publishFixtureReview,
+  uploadPatch,
 } from "../helpers/api";
 import { expectHittable, expectRevealedOnHover } from "../helpers/assertions";
 import { expect, test } from "../helpers/fixtures";
@@ -57,6 +58,48 @@ test("all block types render and key per-block controls have effects", async ({
     block,
     block.getByRole("button", { name: /Comment on block/ }),
   );
+});
+
+test("file-tree entries expand their full patch in place", async ({
+  page,
+  request,
+}) => {
+  const attachment = await uploadPatch(request);
+  const published = await publishFixtureReview(request, {
+    title: "Full patch expansion",
+    blocks: [
+      {
+        id: "files",
+        type: "file-tree",
+        summary: "Changed files",
+        data: {
+          entries: [
+            {
+              path: "src/full.ts",
+              change: "modified",
+              additions: 1,
+              deletions: 1,
+              patch: { attachmentId: attachment.id, lines: 8 },
+            },
+            { path: "src/plain.ts", change: "added", additions: 2 },
+          ],
+        },
+      },
+    ],
+  });
+  await page.goto(`/reviews/${published.review.id}`);
+
+  await expect(page.getByText("fullPatchMarker")).toHaveCount(0);
+  const toggle = page.getByRole("button", { name: /8 lines/ });
+  await toggle.click();
+  await expect(
+    page.getByText("+export const fullPatchMarker = 2;"),
+  ).toBeVisible();
+  await expect(
+    page.getByText("-export const fullPatchMarker = 1;"),
+  ).toBeVisible();
+  await toggle.click();
+  await expect(page.getByText("fullPatchMarker")).toHaveCount(0);
 });
 
 test("seeded image diff and mermaid interactions work", async ({ page }) => {

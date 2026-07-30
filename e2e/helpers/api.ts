@@ -127,6 +127,18 @@ export async function uploadPng(
   return response.json();
 }
 
+export async function uploadPatch(
+  request: APIRequestContext,
+  patch = fixturePatch,
+) {
+  const response = await request.post("/api/attachments", {
+    headers: { "content-type": "text/x-patch" },
+    data: patch,
+  });
+  expect(response.ok()).toBe(true);
+  return response.json();
+}
+
 export function basicBlocks(): ReviewBlock[] {
   return [
     {
@@ -363,3 +375,14 @@ const oneByOnePng = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgaGAAAAKAAZqHf4pYAAAAAElFTkSuQmCC",
   "base64",
 );
+
+export const fixturePatch = [
+  "diff --git a/src/full.ts b/src/full.ts",
+  "--- a/src/full.ts",
+  "+++ b/src/full.ts",
+  "@@ -1,3 +1,3 @@",
+  "-export const fullPatchMarker = 1;",
+  "+export const fullPatchMarker = 2;",
+  " export default fullPatchMarker;",
+  "",
+].join("\n");
