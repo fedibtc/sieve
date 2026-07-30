@@ -49,6 +49,8 @@ export async function POST(request: Request) {
     const { attachment, existing } = await create({
       data,
       createdByUserId: auth.user.id,
+      originalFilename:
+        request.headers.get("x-sieve-filename") ?? "screenshot.png",
     });
     return NextResponse.json(
       { ...attachmentResponse(attachment), existing },

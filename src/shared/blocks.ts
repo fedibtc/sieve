@@ -256,6 +256,17 @@ const imageDiffBlockSchema = z
     }
   });
 
+const screenRecordingBlockSchema = z.object({
+  id: z.string().min(1),
+  type: z.literal("screen-recording"),
+  summary: z.string().optional(),
+  data: z.object({
+    attachmentId: z.string().min(1),
+    title: z.string().trim().min(1).max(120),
+    caption: z.string().trim().min(1).max(500).optional(),
+  }),
+});
+
 export const blockSchema = z.discriminatedUnion("type", [
   richTextBlockSchema,
   sectionBlockSchema,
@@ -269,6 +280,7 @@ export const blockSchema = z.discriminatedUnion("type", [
   mermaidBlockSchema,
   questionFormBlockSchema,
   imageDiffBlockSchema,
+  screenRecordingBlockSchema,
 ]);
 
 export const reviewDocumentSchema = z
@@ -351,6 +363,9 @@ export type ReviewBlock = z.infer<typeof blockSchema>;
 export function collectAttachmentIds(document: ReviewDocument) {
   const ids = new Set<string>();
   for (const block of document.blocks) {
+    if (block.type === "screen-recording") {
+      ids.add(block.data.attachmentId);
+    }
     if (block.type === "image-diff") {
       for (const ref of [
         block.data.before,

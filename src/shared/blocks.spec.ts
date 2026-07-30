@@ -105,6 +105,24 @@ describe("review block schema", () => {
     expect(collectAttachmentIds(document)).toEqual(["before", "after", "diff"]);
   });
 
+  it("accepts screen recordings and collects their attachment ids", () => {
+    const document = reviewDocumentSchema.parse({
+      version: 1,
+      blocks: [
+        {
+          id: "recording",
+          type: "screen-recording",
+          data: {
+            attachmentId: "recording-attachment",
+            title: "Reviewer journey",
+          },
+        },
+      ],
+    });
+
+    expect(collectAttachmentIds(document)).toEqual(["recording-attachment"]);
+  });
+
   it("rejects invalid image-diff status/ref pairings", () => {
     const invalid = {
       version: 1,

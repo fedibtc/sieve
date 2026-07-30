@@ -107,7 +107,14 @@ For UI-facing changes, use the repository's own capture and comparison workflow.
 
 ```bash
 sieve attach path/to/screenshot.png
+sieve attach path/to/recording.webm
 ```
+
+`sieve attach` accepts PNG, WebM, and MP4 files up to 250 MB. Production
+deployments store new attachments in a connected private Vercel Blob store.
+Local development stores direct uploads under `data/attachments`. To copy
+legacy PNG data from Neon to Blob after the first deployment, run
+`pnpm attachments:migrate-to-blob` with production database and Blob access.
 
 If important review output is unavailable, make the limitation visible with `sieve publish --manifest recap.json --review-warning "<what is missing and why>"`. Run `sieve policy init` to commit repository-specific authoring guidance.
 
