@@ -112,9 +112,12 @@ async function createSeedVisualAttachments(createdByUserId: string) {
 
 function attachmentRef(attachment: {
   id: string;
-  width: number;
-  height: number;
+  width: number | null;
+  height: number | null;
 }) {
+  if (!attachment.width || !attachment.height) {
+    throw new Error("Seed screenshot dimensions are missing");
+  }
   return {
     attachmentId: attachment.id,
     width: attachment.width,

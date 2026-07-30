@@ -1,0 +1,18 @@
+{
+  "expect": "valid",
+  "document": {
+    "version": 1,
+    "blocks": [
+      {
+        "id": "recording",
+        "type": "screen-recording",
+        "summary": "Interaction recording",
+        "data": {
+          "attachmentId": "recording-attachment",
+          "title": "Reviewer journey",
+          "caption": "The recording shows the completed reviewer journey."
+        }
+      }
+    ]
+  }
+}

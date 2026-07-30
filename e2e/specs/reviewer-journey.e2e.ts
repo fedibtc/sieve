@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { publishFixtureReview, uploadAttachment } from "../helpers/api";
 import { expectHittable, expectRevealedOnHover } from "../helpers/assertions";
 import { expect, test } from "../helpers/fixtures";
 
@@ -71,4 +73,45 @@ test("seeded reviewer journey composes read-only interactions", async ({
   await expect(page.getByTitle("Clear anchor")).toContainText(
     "qrPayloads.property.test.ts",
   );
+});
+
+test("reviewer can open a review that contains recording evidence", async ({
+  page,
+  request,
+}) => {
+  const bytes = Buffer.from("reviewer-journey-webm-placeholder");
+  const attachment = await uploadAttachment(request, {
+    bytes,
+    filename: "reviewer-journey.webm",
+    mimeType: "video/webm",
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  });
+  const published = await publishFixtureReview(request, {
+    title: "Recorded reviewer journey",
+    blocks: [
+      {
+        id: "recording",
+        type: "screen-recording",
+        data: {
+          attachmentId: attachment.id,
+          title: "Reviewer journey",
+          caption: "The recording shows the complete change.",
+        },
+      },
+    ],
+  });
+
+  await page.goto(`/reviews/${published.review.id}`);
+  const recording = page.locator("[data-screen-recording]");
+  await expect(recording).toBeVisible();
+  await expect(
+    recording.getByRole("heading", { name: "Reviewer journey" }),
+  ).toBeVisible();
+  await expect(recording.getByLabel("Reviewer journey")).toHaveAttribute(
+    "controls",
+    "",
+  );
+  await expect(
+    recording.getByText("The recording shows the complete change."),
+  ).toBeVisible();
 });

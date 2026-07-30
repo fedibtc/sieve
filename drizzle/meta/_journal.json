@@ -36,6 +36,13 @@
       "when": 1784888886021,
       "tag": "0004_long_tattoo",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1785425247393,
+      "tag": "0005_friendly_alex_power",
+      "breakpoints": true
     }
   ]
 }

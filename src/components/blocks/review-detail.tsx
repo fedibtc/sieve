@@ -18,6 +18,7 @@ import {
   RotateCcw,
   Send,
   TableProperties,
+  Video,
   X,
 } from "lucide-react";
 import Image from "next/image";
@@ -944,6 +945,8 @@ function BlockRenderer({
       );
     case "image-diff":
       return <ImageDiffBlock block={block} />;
+    case "screen-recording":
+      return <ScreenRecordingBlock block={block} />;
   }
 }
 
@@ -1556,6 +1559,50 @@ function ImageDiffBlock({
             width={expanded.width}
           />
         </button>
+      ) : null}
+    </section>
+  );
+}
+
+function ScreenRecordingBlock({
+  block,
+}: {
+  block: Extract<ReviewBlock, { type: "screen-recording" }>;
+}) {
+  return (
+    <section
+      className="overflow-hidden rounded-lg border bg-card"
+      data-screen-recording
+    >
+      <div className="flex items-start gap-3 border-b px-4 py-3">
+        <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-foreground text-background">
+          <Video className="h-4 w-4" />
+        </span>
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase text-muted-foreground">
+            Screen recording
+          </p>
+          <h3 className="truncate text-lg font-semibold">{block.data.title}</h3>
+        </div>
+      </div>
+      <video
+        aria-label={block.data.title}
+        className="max-h-[720px] w-full bg-black"
+        controls
+        playsInline
+        preload="metadata"
+        src={`/api/attachments/${block.data.attachmentId}`}
+      >
+        <track kind="captions" />
+      </video>
+      {block.data.caption ? (
+        <p
+          className="border-t px-4 py-3 text-sm text-muted-foreground"
+          data-block-id={block.id}
+          data-text-anchorable="true"
+        >
+          {block.data.caption}
+        </p>
       ) : null}
     </section>
   );

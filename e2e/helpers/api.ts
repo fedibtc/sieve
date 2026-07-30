@@ -125,6 +125,45 @@ export async function uploadPng(
   return response.json();
 }
 
+export async function uploadAttachment(
+  request: APIRequestContext,
+  input: {
+    bytes: Buffer;
+    mimeType: "image/png" | "video/webm" | "video/mp4";
+    filename: string;
+    sha256: string;
+    width?: number;
+    height?: number;
+  },
+) {
+  const reservation = await request.post("/api/attachments/uploads", {
+    data: {
+      sha256: input.sha256,
+      mimeType: input.mimeType,
+      bytes: input.bytes.byteLength,
+      originalFilename: input.filename,
+      width: input.width,
+      height: input.height,
+    },
+  });
+  expect(reservation.ok()).toBe(true);
+  const reserved = await reservation.json();
+  if (!reserved.existing) {
+    const upload = await request.put(reserved.upload.uploadUrl, {
+      data: input.bytes,
+      headers: reserved.upload.uploadHeaders,
+    });
+    expect(upload.ok()).toBe(true);
+    const completed = await request.post(
+      `/api/attachments/uploads/${reserved.id}/complete`,
+      { data: {} },
+    );
+    expect(completed.ok()).toBe(true);
+    return completed.json();
+  }
+  return reserved;
+}
+
 export function basicBlocks(): ReviewBlock[] {
   return [
     {
@@ -148,8 +187,8 @@ export function basicBlocks(): ReviewBlock[] {
   ];
 }
 
-export function allBlockTypes(): ReviewBlock[] {
-  return [
+export function allBlockTypes(recordingAttachmentId?: string): ReviewBlock[] {
+  const blocks: ReviewBlock[] = [
     {
       id: "rich",
       type: "rich-text",
@@ -273,6 +312,19 @@ export function allBlockTypes(): ReviewBlock[] {
       },
     },
   ];
+  if (recordingAttachmentId) {
+    blocks.push({
+      id: "recording",
+      type: "screen-recording",
+      summary: "Journey evidence",
+      data: {
+        attachmentId: recordingAttachmentId,
+        title: "Reviewer journey",
+        caption: "The recording shows the reviewer journey.",
+      },
+    });
+  }
+  return blocks;
 }
 
 export function keyChangesGroup(): ReviewBlock[] {

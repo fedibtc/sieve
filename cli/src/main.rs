@@ -19,7 +19,7 @@ use std::{
 mod policy;
 
 const DEFAULT_HOST: &str = "https://sieve.fedi.xyz";
-const MAX_ATTACHMENT_BYTES: u64 = 2_000_000;
+const MAX_ATTACHMENT_BYTES: u64 = 250_000_000;
 const MAX_KEY_DIFFS: usize = 5;
 const MAX_DIFF_LINES: usize = 150;
 const MAX_BLOCKS: usize = 120;
@@ -1030,36 +1030,95 @@ fn session(client: &ApiClient, command: SessionSubcommand) -> Result<Value> {
 }
 
 fn attach(client: &ApiClient, args: AttachArgs) -> Result<Value> {
-    let data = fs::read(&args.file)?;
-    if data.len() as u64 > MAX_ATTACHMENT_BYTES {
+    let bytes = fs::metadata(&args.file)?.len();
+    if bytes > MAX_ATTACHMENT_BYTES {
         bail!(
-            "{} exceeds {MAX_ATTACHMENT_BYTES} byte PNG limit",
+            "{} exceeds the {MAX_ATTACHMENT_BYTES} byte attachment limit",
             args.file.display()
         );
     }
-    upload_png(client, data)
-}
-
-fn upload_png(client: &ApiClient, data: Vec<u8>) -> Result<Value> {
-    let (width, height) = png_dimensions(&data)?;
+    let data = fs::read(&args.file)?;
+    let filename = args
+        .file
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| anyhow!("attachment filename is not valid UTF-8"))?;
+    let mime_type = attachment_mime_type(&args.file)?;
+    let (width, height) = if mime_type == "image/png" {
+        let (width, height) = png_dimensions(&data)?;
+        (Some(width), Some(height))
+    } else {
+        (None, None)
+    };
     let sha256 = hex::encode(Sha256::digest(&data));
     if let Some(existing) = client.get_optional(&format!("/api/attachments/by-hash/{sha256}"))? {
         return Ok(json!({
             "attachmentId": existing.get("id").cloned().unwrap_or(Value::Null),
             "width": existing.get("width").cloned().unwrap_or(json!(width)),
             "height": existing.get("height").cloned().unwrap_or(json!(height)),
+            "mimeType": existing.get("mimeType").cloned().unwrap_or(json!(mime_type)),
             "sha256": sha256,
             "deduplicated": true,
         }));
     }
-    let uploaded = client.post_png("/api/attachments", data)?;
+    let reservation = client.post(
+        "/api/attachments/uploads",
+        json!({
+            "sha256": sha256,
+            "mimeType": mime_type,
+            "bytes": data.len(),
+            "originalFilename": filename,
+            "width": width,
+            "height": height,
+        }),
+    )?;
+    if reservation
+        .get("existing")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Ok(json!({
+            "attachmentId": reservation.get("id").cloned().unwrap_or(Value::Null),
+            "width": reservation.get("width").cloned().unwrap_or(Value::Null),
+            "height": reservation.get("height").cloned().unwrap_or(Value::Null),
+            "mimeType": reservation.get("mimeType").cloned().unwrap_or(json!(mime_type)),
+            "sha256": reservation.get("sha256").cloned().unwrap_or(json!(sha256)),
+            "deduplicated": true,
+        }));
+    }
+    let attachment_id = required_string(&reservation, "/id")?;
+    let upload_url = required_string(&reservation, "/upload/uploadUrl")?;
+    let requires_auth = reservation
+        .pointer("/upload/requiresAuth")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    client.put_bytes(upload_url, mime_type, data, requires_auth)?;
+    let uploaded = client.post(
+        &format!("/api/attachments/uploads/{attachment_id}/complete"),
+        json!({}),
+    )?;
     Ok(json!({
         "attachmentId": uploaded.get("id").cloned().unwrap_or(Value::Null),
-        "width": uploaded.get("width").cloned().unwrap_or(json!(width)),
-        "height": uploaded.get("height").cloned().unwrap_or(json!(height)),
+        "width": uploaded.get("width").cloned().unwrap_or(Value::Null),
+        "height": uploaded.get("height").cloned().unwrap_or(Value::Null),
+        "mimeType": uploaded.get("mimeType").cloned().unwrap_or(json!(mime_type)),
         "sha256": uploaded.get("sha256").cloned().unwrap_or(json!(sha256)),
         "upload": uploaded,
     }))
+}
+
+fn attachment_mime_type(path: &Path) -> Result<&'static str> {
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("png") => Ok("image/png"),
+        Some("webm") => Ok("video/webm"),
+        Some("mp4") => Ok("video/mp4"),
+        _ => bail!("only PNG, WebM, and MP4 attachments are supported"),
+    }
 }
 
 fn pr_comment(client: &ApiClient, review_id: String) -> Result<Value> {
@@ -1520,16 +1579,29 @@ impl ApiClient {
         )
     }
 
-    fn post_png(&self, path: &str, data: Vec<u8>) -> Result<Value> {
-        self.send(
-            self.auth(
-                self.client
-                    .post(self.url(path))
-                    .header("content-type", "image/png")
-                    .header("content-length", data.len().to_string())
-                    .body(data),
-            ),
-        )
+    fn put_bytes(
+        &self,
+        url: &str,
+        mime_type: &str,
+        data: Vec<u8>,
+        requires_auth: bool,
+    ) -> Result<()> {
+        let request = self
+            .client
+            .put(url)
+            .header("content-type", mime_type)
+            .header("content-length", data.len().to_string())
+            .body(data);
+        let request = if requires_auth {
+            self.auth(request)
+        } else {
+            request
+        };
+        let (status, value) = self.send_response(request)?;
+        if !(200..300).contains(&status) {
+            bail!("attachment upload returned {status}: {value}");
+        }
+        Ok(())
     }
 
     fn auth(&self, request: RequestBuilder) -> RequestBuilder {
@@ -2803,6 +2875,23 @@ mod tests {
     }
 
     #[test]
+    fn accepts_supported_attachment_extensions() {
+        assert_eq!(
+            attachment_mime_type(Path::new("capture.PNG")).unwrap(),
+            "image/png"
+        );
+        assert_eq!(
+            attachment_mime_type(Path::new("capture.webm")).unwrap(),
+            "video/webm"
+        );
+        assert_eq!(
+            attachment_mime_type(Path::new("capture.mp4")).unwrap(),
+            "video/mp4"
+        );
+        assert!(attachment_mime_type(Path::new("capture.mov")).is_err());
+    }
+
+    #[test]
     fn finds_and_redacts_token_like_strings() {
         let mut value = json!({
             "content": {
@@ -3223,6 +3312,7 @@ mod tests {
             "valid-callout.json",
             "valid-image-diff.json",
             "valid-rich-text.json",
+            "valid-screen-recording.json",
             "valid-section.json",
         ] {
             let fixture = read_block_fixture(name);

@@ -1,7 +1,9 @@
+import { createHash } from "node:crypto";
 import {
   allBlockTypes,
   maliciousMermaid,
   publishFixtureReview,
+  uploadAttachment,
 } from "../helpers/api";
 import { expectHittable, expectRevealedOnHover } from "../helpers/assertions";
 import { expect, test } from "../helpers/fixtures";
@@ -10,9 +12,16 @@ test("all block types render and key per-block controls have effects", async ({
   page,
   request,
 }) => {
+  const videoBytes = Buffer.from("e2e-webm-placeholder");
+  const recording = await uploadAttachment(request, {
+    bytes: videoBytes,
+    filename: "reviewer-journey.webm",
+    mimeType: "video/webm",
+    sha256: createHash("sha256").update(videoBytes).digest("hex"),
+  });
   const published = await publishFixtureReview(request, {
     title: "All block types",
-    blocks: allBlockTypes(),
+    blocks: allBlockTypes(recording.id),
   });
   await page.goto(`/reviews/${published.review.id}`);
 
@@ -42,6 +51,9 @@ test("all block types render and key per-block controls have effects", async ({
   await expect(postAnswer).toBeEnabled();
   await postAnswer.click();
   await expect(page.getByText(/Answered:/)).toBeVisible();
+  const video = page.getByLabel("Reviewer journey");
+  await expect(video).toBeVisible();
+  await expect(video).toHaveAttribute("controls", "");
 
   const block = page.locator("article").filter({ hasText: "Markdown" }).first();
   await expectRevealedOnHover(
