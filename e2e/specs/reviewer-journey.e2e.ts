@@ -37,6 +37,14 @@ test("seeded reviewer journey composes read-only interactions", async ({
     await page.evaluate(() => localStorage.getItem("sieve:diff-view-mode")),
   ).toBe("unified");
 
+  // Authored annotations read inline beside their lines without hovering.
+  await expect(
+    page.getByText(/Review whether recording the offer before rendering/),
+  ).toBeVisible();
+  await expect(
+    page.locator("article#issuer-flow-diff [data-diff-annotation]"),
+  ).toContainText("state coupling");
+
   const thumbnail = page.getByRole("img", {
     name: /credential-acceptance .*this branch/i,
   });

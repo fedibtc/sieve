@@ -7,6 +7,7 @@ for (const path of [
   "/settings/tokens",
   "/login",
   "/device",
+  "/gallery",
 ]) {
   test(`critical and serious axe smoke: ${path}`, async ({ page }) => {
     await page.goto(path);

@@ -47,6 +47,8 @@ pnpm dev
 
 Open `http://localhost:7919/reviews`. Localhost uses the sanctioned local-dev auth bypass; production still requires Better Auth configuration.
 
+Open `http://localhost:7919/gallery` for the block gallery: a storybook-style page that renders every review block type from local fixtures (`src/shared/gallery.ts`), with an event panel showing the anchors each interaction would post. It needs no review, database seed, or login, and it is disabled on hosted deploys.
+
 By default the app stores data in `data/pglite`. The development server keeps
 one embedded database client across hot reloads and closes it when the dev
 process stops, so reviews survive ordinary restarts. Set `DATABASE_URL` to use
