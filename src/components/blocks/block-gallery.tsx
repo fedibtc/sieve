@@ -93,9 +93,9 @@ export function BlockGallery() {
 
   return (
     <main className="min-h-screen bg-background text-foreground">
-      <header className="border-b bg-card">
-        <div className="mx-auto flex w-full max-w-[1600px] items-baseline gap-3 px-6 py-4">
-          <h1 className="text-xl font-semibold tracking-tight">
+      <header className="sticky top-0 z-40 h-12 border-b bg-card/95 backdrop-blur">
+        <div className="mx-auto flex h-full w-full max-w-[1600px] items-center gap-3 px-6">
+          <h1 className="text-lg font-semibold tracking-tight">
             Block gallery
           </h1>
           <p className="text-sm text-muted-foreground">
@@ -106,7 +106,7 @@ export function BlockGallery() {
       <div className="mx-auto grid w-full max-w-[1600px] grid-cols-1 gap-8 px-6 py-8 lg:grid-cols-[220px_minmax(0,1fr)_300px]">
         <nav
           aria-label="Gallery entries"
-          className="self-start lg:sticky lg:top-8"
+          className="self-start lg:sticky lg:top-20"
         >
           <ul className="space-y-1">
             {galleryEntries.map((item) => (
@@ -149,7 +149,7 @@ export function BlockGallery() {
         </section>
         <aside
           aria-label="Emitted events"
-          className="self-start lg:sticky lg:top-8"
+          className="self-start lg:sticky lg:top-20"
         >
           <div className="rounded-lg border bg-card shadow-sm">
             <div className="border-b px-4 py-3 text-sm font-semibold">

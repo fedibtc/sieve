@@ -25,6 +25,7 @@ import {
 import Image from "next/image";
 import Link from "next/link";
 import {
+  Fragment,
   type ReactNode,
   type RefObject,
   useEffect,
@@ -36,6 +37,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { RelativeTime } from "@/components/relative-time";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
+import { emphasizeRanges, intralineRanges } from "@/lib/intraline";
 import type { ReviewAnchor } from "@/shared/anchors";
 import type { ReviewBlock, ReviewDocument } from "@/shared/blocks";
 import { Button } from "../ui/button";
@@ -1885,7 +1887,6 @@ function DiffBlock({
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
     () => new Set(),
   );
-  const [activeAnnotation, setActiveAnnotation] = useState<number | null>(null);
   const annotations = block.data.annotations.map((annotation, index) => ({
     ...annotation,
     marker: index + 1,
@@ -1907,102 +1908,99 @@ function DiffBlock({
   }
   return (
     <div
-      className={`grid gap-3 ${
-        annotations.length > 0 ? "2xl:grid-cols-[minmax(0,1fr)_260px]" : ""
-      }`}
+      ref={codeSurfaceRef}
+      className="min-w-0 overflow-clip rounded-lg border bg-card"
+      data-diff-code
     >
       <div
-        ref={codeSurfaceRef}
-        className="min-w-0 overflow-hidden rounded-lg border bg-card"
-        data-diff-code
+        className="sticky top-12 z-[5] flex items-center justify-between gap-3 rounded-t-lg border-b bg-muted px-3 py-2"
+        data-diff-header
       >
-        <div className="flex items-center justify-between gap-3 border-b bg-muted/60 px-3 py-2">
-          <div className="flex min-w-0 items-center gap-2">
-            <FileCode2 className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <span className="truncate font-mono text-sm font-medium">
-              {block.data.filename}
-            </span>
-            {block.data.language ? (
-              <Badge className="font-mono" tone="neutral">
-                {block.data.language}
-              </Badge>
-            ) : null}
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-xs">
-              <span className="text-emerald-700">+{additions}</span>{" "}
-              <span className="text-red-700">-{deletions}</span>
-            </span>
-            {!isOneSided ? (
-              <div className="hidden rounded-md border bg-card p-0.5 sm:flex">
-                {(["split", "unified"] as const).map((item) => (
-                  <button
-                    key={item}
-                    className={`rounded px-2 py-1 text-xs transition-colors ${
-                      effectiveMode === item
-                        ? "bg-primary text-primary-foreground"
-                        : "text-muted-foreground hover:bg-accent"
-                    }`}
-                    type="button"
-                    onClick={() => {
-                      setMode(item);
-                      window.localStorage.setItem(
-                        DIFF_VIEW_MODE_STORAGE_KEY,
-                        item,
-                      );
-                    }}
-                  >
-                    {item}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
+        <div className="flex min-w-0 items-center gap-2">
+          <FileCode2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="truncate font-mono text-sm font-medium">
+            {block.data.filename}
+          </span>
+          {block.data.language ? (
+            <Badge className="font-mono" tone="neutral">
+              {block.data.language}
+            </Badge>
+          ) : null}
         </div>
-        <div className="overflow-x-auto font-mono text-[0.75rem] leading-5">
-          {displayRows.map((item) =>
-            item.type === "collapse" ? (
-              <CollapsedDiffRow
-                key={item.id}
-                count={item.count}
-                unified={unified}
-                onExpand={() => toggleGroup(item.id)}
-              />
-            ) : unified ? (
-              <UnifiedDiffRow
-                key={item.row.id}
-                block={block}
-                row={item.row}
-                highlightedAfter={highlightedAfter}
-                highlightedBefore={highlightedBefore}
-                threads={threads}
-                annotations={annotations}
-                activeAnnotation={activeAnnotation}
-                onAnchor={onAnchor}
-                onAnnotationHover={setActiveAnnotation}
-              />
-            ) : (
-              <SplitDiffRow
-                key={item.row.id}
-                block={block}
-                row={item.row}
-                highlightedAfter={highlightedAfter}
-                highlightedBefore={highlightedBefore}
-                threads={threads}
-                annotations={annotations}
-                activeAnnotation={activeAnnotation}
-                onAnchor={onAnchor}
-                onAnnotationHover={setActiveAnnotation}
-              />
-            ),
-          )}
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-xs">
+            <span className="text-emerald-700">+{additions}</span>{" "}
+            <span className="text-red-700">-{deletions}</span>
+          </span>
+          {!isOneSided ? (
+            <div className="hidden rounded-md border bg-card p-0.5 sm:flex">
+              {(["split", "unified"] as const).map((item) => (
+                <button
+                  key={item}
+                  className={`rounded px-2 py-1 text-xs transition-colors ${
+                    effectiveMode === item
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:bg-accent"
+                  }`}
+                  type="button"
+                  onClick={() => {
+                    setMode(item);
+                    window.localStorage.setItem(
+                      DIFF_VIEW_MODE_STORAGE_KEY,
+                      item,
+                    );
+                  }}
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
       </div>
-      <AnnotationRail
-        activeAnnotation={activeAnnotation}
-        annotations={annotations}
-        onAnnotationHover={setActiveAnnotation}
-      />
+      <div className="overflow-x-auto font-mono text-[0.75rem] leading-5">
+        {displayRows.map((item) =>
+          item.type === "collapse" ? (
+            <CollapsedDiffRow
+              key={item.id}
+              count={item.count}
+              startLine={item.startLine}
+              endLine={item.endLine}
+              unified={unified}
+              onExpand={() => toggleGroup(item.id)}
+            />
+          ) : item.type === "annotation" ? (
+            <AnnotationCard
+              key={`annotation:${item.annotation.marker}`}
+              annotation={item.annotation}
+              blockId={block.id}
+              unified={unified}
+            />
+          ) : unified ? (
+            <UnifiedDiffRow
+              key={item.row.id}
+              block={block}
+              row={item.row}
+              highlightedAfter={highlightedAfter}
+              highlightedBefore={highlightedBefore}
+              threads={threads}
+              annotations={annotations}
+              onAnchor={onAnchor}
+            />
+          ) : (
+            <SplitDiffRow
+              key={item.row.id}
+              block={block}
+              row={item.row}
+              highlightedAfter={highlightedAfter}
+              highlightedBefore={highlightedBefore}
+              threads={threads}
+              annotations={annotations}
+              onAnchor={onAnchor}
+            />
+          ),
+        )}
+      </div>
     </div>
   );
 }
@@ -2014,9 +2012,7 @@ function SplitDiffRow({
   highlightedBefore,
   threads,
   annotations,
-  activeAnnotation,
   onAnchor,
-  onAnnotationHover,
 }: {
   block: Extract<ReviewBlock, { type: "diff" }>;
   row: DiffRow;
@@ -2024,41 +2020,23 @@ function SplitDiffRow({
   highlightedBefore: HighlightLine[];
   threads: Thread[];
   annotations: NumberedAnnotation[];
-  activeAnnotation: number | null;
   onAnchor: (anchor: ReviewAnchor) => void;
-  onAnnotationHover: (marker: number | null) => void;
 }) {
-  const beforeMarker = firstAnnotationMarker(
-    annotations,
-    "before",
-    row.beforeLine,
-  );
-  const afterMarker = firstAnnotationMarker(
-    annotations,
-    "after",
-    row.afterLine,
-  );
-  const active = [beforeMarker, afterMarker].some(
-    (marker) => marker && marker === activeAnnotation,
-  );
+  const emphasis =
+    row.kind === "modify" ? intralineRanges(row.before, row.after) : null;
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: hover-only annotation association; line buttons remain keyboard targets.
-    <div
-      className={`grid min-w-[760px] grid-cols-[64px_minmax(0,1fr)_64px_minmax(0,1fr)] border-b last:border-b-0 ${
-        active ? "bg-amber-50/50" : ""
-      }`}
-      role="presentation"
-      onMouseEnter={() =>
-        onAnnotationHover(beforeMarker ?? afterMarker ?? null)
-      }
-      onMouseLeave={() => onAnnotationHover(null)}
-    >
+    <div className="grid min-w-[760px] grid-cols-[64px_minmax(0,1fr)_64px_minmax(0,1fr)] border-b last:border-b-0">
       <LineButton
         id={lineTargetId(block.id, "before", row.beforeLine)}
         line={row.beforeLine}
         side="before"
         threadIds={lineThreadIds(threads, "before", row.beforeLine)}
-        marker={beforeMarker}
+        marker={annotationMarkerStartingAt(
+          annotations,
+          "before",
+          row.beforeLine,
+        )}
+        annotated={lineHasAnnotation(annotations, "before", row.beforeLine)}
         onClick={() =>
           row.beforeLine
             ? onAnchor({
@@ -2081,13 +2059,15 @@ function SplitDiffRow({
         }
         value={row.before}
         sign={row.kind === "remove" || row.kind === "modify" ? "-" : " "}
+        emphasis={emphasis?.before}
       />
       <LineButton
         id={lineTargetId(block.id, "after", row.afterLine)}
         line={row.afterLine}
         side="after"
         threadIds={lineThreadIds(threads, "after", row.afterLine)}
-        marker={afterMarker}
+        marker={annotationMarkerStartingAt(annotations, "after", row.afterLine)}
+        annotated={lineHasAnnotation(annotations, "after", row.afterLine)}
         onClick={() =>
           row.afterLine
             ? onAnchor({
@@ -2106,6 +2086,7 @@ function SplitDiffRow({
         tone={row.kind === "add" || row.kind === "modify" ? "add" : "context"}
         value={row.after}
         sign={row.kind === "add" || row.kind === "modify" ? "+" : " "}
+        emphasis={emphasis?.after}
       />
     </div>
   );
@@ -2118,9 +2099,7 @@ function UnifiedDiffRow({
   highlightedBefore,
   threads,
   annotations,
-  activeAnnotation,
   onAnchor,
-  onAnnotationHover,
 }: {
   block: Extract<ReviewBlock, { type: "diff" }>;
   row: DiffRow;
@@ -2128,11 +2107,10 @@ function UnifiedDiffRow({
   highlightedBefore: HighlightLine[];
   threads: Thread[];
   annotations: NumberedAnnotation[];
-  activeAnnotation: number | null;
   onAnchor: (anchor: ReviewAnchor) => void;
-  onAnnotationHover: (marker: number | null) => void;
 }) {
   if (row.kind === "modify") {
+    const emphasis = intralineRanges(row.before, row.after);
     return (
       <>
         <UnifiedDiffLine
@@ -2149,9 +2127,8 @@ function UnifiedDiffRow({
           sign="-"
           threads={threads}
           annotations={annotations}
-          activeAnnotation={activeAnnotation}
           onAnchor={onAnchor}
-          onAnnotationHover={onAnnotationHover}
+          emphasis={emphasis?.before}
         />
         <UnifiedDiffLine
           block={block}
@@ -2165,9 +2142,8 @@ function UnifiedDiffRow({
           sign="+"
           threads={threads}
           annotations={annotations}
-          activeAnnotation={activeAnnotation}
           onAnchor={onAnchor}
-          onAnnotationHover={onAnnotationHover}
+          emphasis={emphasis?.after}
         />
       </>
     );
@@ -2195,9 +2171,7 @@ function UnifiedDiffRow({
       sign={sign}
       threads={threads}
       annotations={annotations}
-      activeAnnotation={activeAnnotation}
       onAnchor={onAnchor}
-      onAnnotationHover={onAnnotationHover}
     />
   );
 }
@@ -2212,9 +2186,8 @@ function UnifiedDiffLine({
   sign,
   threads,
   annotations,
-  activeAnnotation,
   onAnchor,
-  onAnnotationHover,
+  emphasis,
 }: {
   block: Extract<ReviewBlock, { type: "diff" }>;
   row: DiffRow;
@@ -2225,27 +2198,18 @@ function UnifiedDiffLine({
   sign: string;
   threads: Thread[];
   annotations: NumberedAnnotation[];
-  activeAnnotation: number | null;
   onAnchor: (anchor: ReviewAnchor) => void;
-  onAnnotationHover: (marker: number | null) => void;
+  emphasis?: Array<[number, number]>;
 }) {
   const line = side === "before" ? row.beforeLine : row.afterLine;
-  const marker = firstAnnotationMarker(annotations, side, line);
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: hover-only annotation association; line buttons remain keyboard targets.
-    <div
-      className={`grid min-w-[560px] grid-cols-[64px_minmax(0,1fr)] border-b last:border-b-0 ${
-        marker && marker === activeAnnotation ? "bg-amber-50/50" : ""
-      }`}
-      role="presentation"
-      onMouseEnter={() => onAnnotationHover(marker ?? null)}
-      onMouseLeave={() => onAnnotationHover(null)}
-    >
+    <div className="grid min-w-[560px] grid-cols-[64px_minmax(0,1fr)] border-b last:border-b-0">
       <LineButton
         id={lineTargetId(block.id, side, line)}
         line={line}
         threadIds={lineThreadIds(threads, side, line)}
-        marker={marker}
+        marker={annotationMarkerStartingAt(annotations, side, line)}
+        annotated={lineHasAnnotation(annotations, side, line)}
         side={side}
         onClick={() =>
           line
@@ -2258,7 +2222,13 @@ function UnifiedDiffLine({
             : undefined
         }
       />
-      <CodeCell tokens={tokens} tone={tone} sign={sign} value={value} />
+      <CodeCell
+        tokens={tokens}
+        tone={tone}
+        sign={sign}
+        value={value}
+        emphasis={emphasis}
+      />
     </div>
   );
 }
@@ -2274,7 +2244,6 @@ function AnnotatedCodeBlock({
 }) {
   const startLine = block.data.startLine;
   const [expanded, setExpanded] = useState(false);
-  const [activeAnnotation, setActiveAnnotation] = useState<number | null>(null);
   const lines = block.data.code.split("\n");
   const language = inferLanguageFromFilename(
     block.data.filename,
@@ -2284,58 +2253,63 @@ function AnnotatedCodeBlock({
     () => highlightCodeLines(block.data.code, language),
     [block.data.code, language],
   );
-  const visibleLines = expanded ? lines : lines.slice(0, 30);
   const annotations = block.data.annotations.map((annotation, index) => ({
     ...annotation,
     marker: index + 1,
   }));
+  // Keep every annotated line visible; the expander only hides unannotated
+  // tails.
+  const previewCount = Math.max(
+    30,
+    ...annotations.map(
+      (annotation) => annotationRange(annotation)[1] - startLine + 1,
+    ),
+  );
+  const visibleLines = expanded ? lines : lines.slice(0, previewCount);
   return (
-    <div
-      className={`grid gap-3 ${
-        annotations.length > 0 ? "2xl:grid-cols-[minmax(0,1fr)_260px]" : ""
-      }`}
-    >
-      <div className="overflow-hidden rounded-lg border bg-card">
-        <div className="flex items-center justify-between gap-3 border-b bg-muted/60 px-3 py-2">
-          <div className="flex min-w-0 items-center gap-2">
-            <Code2 className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <span className="truncate font-mono text-sm font-medium">
-              {block.data.filename}
-            </span>
-            {block.data.language ? (
-              <Badge className="font-mono" tone="neutral">
-                {block.data.language}
-              </Badge>
-            ) : null}
-          </div>
-          <span className="font-mono text-xs text-muted-foreground">
-            {lines.length} lines
+    <div className="overflow-clip rounded-lg border bg-card">
+      <div
+        className="sticky top-12 z-[5] flex items-center justify-between gap-3 rounded-t-lg border-b bg-muted px-3 py-2"
+        data-diff-header
+      >
+        <div className="flex min-w-0 items-center gap-2">
+          <Code2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="truncate font-mono text-sm font-medium">
+            {block.data.filename}
           </span>
+          {block.data.language ? (
+            <Badge className="font-mono" tone="neutral">
+              {block.data.language}
+            </Badge>
+          ) : null}
         </div>
-        <div className="overflow-x-auto font-mono text-[0.75rem] leading-5">
-          {visibleLines.map((line, index) => {
-            const lineNumber = startLine + index;
-            const marker = firstAnnotationMarker(
-              annotations,
-              "after",
-              lineNumber,
-            );
-            return (
-              // biome-ignore lint/a11y/noStaticElementInteractions: hover-only annotation association; line buttons remain keyboard targets.
-              <div
-                key={`${lineNumber}:${line}`}
-                className={`grid min-w-[560px] grid-cols-[64px_minmax(0,1fr)] border-b last:border-b-0 ${
-                  marker && marker === activeAnnotation ? "bg-amber-50/50" : ""
-                }`}
-                role="presentation"
-                onMouseEnter={() => setActiveAnnotation(marker ?? null)}
-                onMouseLeave={() => setActiveAnnotation(null)}
-              >
+        <span className="font-mono text-xs text-muted-foreground">
+          {lines.length} lines
+        </span>
+      </div>
+      <div className="overflow-x-auto font-mono text-[0.75rem] leading-5">
+        {visibleLines.map((line, index) => {
+          const lineNumber = startLine + index;
+          const endingAnnotations = annotations.filter(
+            (annotation) => annotationRange(annotation)[1] === lineNumber,
+          );
+          return (
+            <Fragment key={`${lineNumber}:${line}`}>
+              <div className="grid min-w-[560px] grid-cols-[64px_minmax(0,1fr)] border-b last:border-b-0">
                 <LineButton
                   id={lineTargetId(block.id, "after", lineNumber)}
                   line={lineNumber}
                   threadIds={lineThreadIds(threads, "after", lineNumber)}
-                  marker={marker}
+                  marker={annotationMarkerStartingAt(
+                    annotations,
+                    "after",
+                    lineNumber,
+                  )}
+                  annotated={lineHasAnnotation(
+                    annotations,
+                    "after",
+                    lineNumber,
+                  )}
                   side="after"
                   onClick={() =>
                     onAnchor({
@@ -2352,31 +2326,41 @@ function AnnotatedCodeBlock({
                   value={line}
                 />
               </div>
-            );
-          })}
-        </div>
-        {!expanded && lines.length > visibleLines.length ? (
-          <button
-            className="w-full border-t bg-muted/40 px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted"
-            type="button"
-            onClick={() => setExpanded(true)}
-          >
-            Show all {lines.length} lines
-          </button>
-        ) : null}
+              {endingAnnotations.map((annotation) => (
+                <AnnotationCard
+                  key={`annotation:${annotation.marker}`}
+                  annotation={annotation}
+                  blockId={block.id}
+                  unified
+                />
+              ))}
+            </Fragment>
+          );
+        })}
       </div>
-      <AnnotationRail
-        activeAnnotation={activeAnnotation}
-        annotations={annotations}
-        onAnnotationHover={setActiveAnnotation}
-      />
+      {!expanded && lines.length > visibleLines.length ? (
+        <button
+          className="w-full border-t bg-muted/40 px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted"
+          type="button"
+          onClick={() => setExpanded(true)}
+        >
+          Show all {lines.length} lines
+        </button>
+      ) : null}
     </div>
   );
 }
 
 type DiffDisplayRow =
   | { type: "row"; row: DiffRow }
-  | { type: "collapse"; id: string; count: number };
+  | {
+      type: "collapse";
+      id: string;
+      count: number;
+      startLine?: number;
+      endLine?: number;
+    }
+  | { type: "annotation"; annotation: NumberedAnnotation };
 
 type DiffRow = {
   id: string;
@@ -2524,17 +2508,60 @@ function buildDiffDisplayRows(
 
     const head = run.slice(0, contextEdge);
     const tail = run.slice(-contextEdge);
-    const hiddenCount = run.length - head.length - tail.length;
+    const hidden = run.slice(contextEdge, run.length - contextEdge);
+    const firstHidden = hidden[0];
+    const lastHidden = hidden[hidden.length - 1];
     output.push(
       ...head.map((runRow) => ({ type: "row" as const, row: runRow })),
     );
-    output.push({ type: "collapse", id: collapseId, count: hiddenCount });
+    output.push({
+      type: "collapse",
+      id: collapseId,
+      count: hidden.length,
+      startLine: firstHidden?.afterLine ?? firstHidden?.beforeLine,
+      endLine: lastHidden?.afterLine ?? lastHidden?.beforeLine,
+    });
     output.push(
       ...tail.map((runRow) => ({ type: "row" as const, row: runRow })),
     );
   }
 
+  return interleaveAnnotations(output, annotations);
+}
+
+// Inserts each annotation card directly after the last row of its line
+// range, so notes sit next to the code they describe.
+function interleaveAnnotations(
+  items: DiffDisplayRow[],
+  annotations: NumberedAnnotation[],
+): DiffDisplayRow[] {
+  if (annotations.length === 0) {
+    return items;
+  }
+  const remaining = [...annotations];
+  const output: DiffDisplayRow[] = [];
+  for (const item of items) {
+    output.push(item);
+    if (item.type !== "row") {
+      continue;
+    }
+    for (const annotation of remaining.filter((candidate) =>
+      annotationEndsAtRow(candidate, item.row),
+    )) {
+      output.push({ type: "annotation", annotation });
+      remaining.splice(remaining.indexOf(annotation), 1);
+    }
+  }
+  // Annotations whose lines no longer match any row still render at the end.
+  for (const annotation of remaining) {
+    output.push({ type: "annotation", annotation });
+  }
   return output;
+}
+
+function annotationEndsAtRow(annotation: NumberedAnnotation, row: DiffRow) {
+  const line = annotation.side === "before" ? row.beforeLine : row.afterLine;
+  return line !== undefined && annotationRange(annotation)[1] === line;
 }
 
 function isProtectedDiffRow(
@@ -2543,9 +2570,8 @@ function isProtectedDiffRow(
   threads: Thread[],
 ) {
   return (
-    firstAnnotationMarker(annotations, "before", row.beforeLine) !==
-      undefined ||
-    firstAnnotationMarker(annotations, "after", row.afterLine) !== undefined ||
+    lineHasAnnotation(annotations, "before", row.beforeLine) ||
+    lineHasAnnotation(annotations, "after", row.afterLine) ||
     lineThreadIds(threads, "before", row.beforeLine).length > 0 ||
     lineThreadIds(threads, "after", row.afterLine).length > 0
   );
@@ -2553,13 +2579,21 @@ function isProtectedDiffRow(
 
 function CollapsedDiffRow({
   count,
+  startLine,
+  endLine,
   unified,
   onExpand,
 }: {
   count: number;
+  startLine?: number;
+  endLine?: number;
   unified: boolean;
   onExpand: () => void;
 }) {
+  const range =
+    startLine !== undefined && endLine !== undefined
+      ? ` (${startLine}–${endLine})`
+      : "";
   return (
     <button
       className={`grid w-full min-w-[560px] border-y bg-muted/40 text-center text-xs font-medium text-muted-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
@@ -2572,7 +2606,7 @@ function CollapsedDiffRow({
     >
       <span />
       <span className={unified ? "px-3 py-2" : "col-span-3 px-3 py-2"}>
-        · {count} unchanged lines ·
+        · {count} unchanged lines{range} ·
       </span>
     </button>
   );
@@ -2584,6 +2618,7 @@ function LineButton({
   side,
   threadIds,
   marker,
+  annotated,
   onClick,
 }: {
   id?: string;
@@ -2591,13 +2626,14 @@ function LineButton({
   side: "before" | "after";
   threadIds: string[];
   marker?: number;
+  annotated?: boolean;
   onClick: () => void;
 }) {
   const count = threadIds.length;
   return (
     <button
       id={id}
-      className="group/gutter flex items-center justify-end gap-1 bg-muted/60 px-2 py-1 text-right tabular-nums text-muted-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="group/gutter relative flex items-center justify-end gap-1 bg-muted/60 px-2 py-1 text-right tabular-nums text-muted-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       disabled={!line}
       title={`Comment on ${side} line ${line}`}
       type="button"
@@ -2610,7 +2646,7 @@ function LineButton({
       }}
     >
       {marker ? (
-        <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-amber-100 text-[10px] font-semibold text-amber-800">
+        <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-violet-100 text-[10px] font-semibold text-violet-800">
           {marker}
         </span>
       ) : null}
@@ -2626,6 +2662,13 @@ function LineButton({
           +
         </span>
       ) : null}
+      {annotated ? (
+        <span
+          aria-hidden
+          className="absolute inset-y-0 right-0 w-[3px] bg-violet-300"
+          data-annotation-bracket
+        />
+      ) : null}
     </button>
   );
 }
@@ -2635,11 +2678,13 @@ function CodeCell({
   tone,
   sign,
   tokens,
+  emphasis,
 }: {
   value: string;
   tone: "context" | "add" | "remove";
   sign?: string;
   tokens?: HighlightLine;
+  emphasis?: Array<[number, number]>;
 }) {
   const toneClass =
     tone === "add"
@@ -2647,6 +2692,16 @@ function CodeCell({
       : tone === "remove"
         ? "bg-red-50/70 text-red-950"
         : "bg-card";
+  const baseTokens = tokens && tokens.length > 0 ? tokens : [{ text: value }];
+  const displayTokens = emphasis?.length
+    ? emphasizeRanges(baseTokens, emphasis)
+    : baseTokens;
+  const emphasisClass =
+    tone === "add"
+      ? "rounded-sm bg-emerald-200/80"
+      : tone === "remove"
+        ? "rounded-sm bg-red-200/70"
+        : "";
   return (
     <code
       className={`flex min-w-0 overflow-hidden whitespace-pre-wrap px-3 py-1 ${toneClass}`}
@@ -2664,7 +2719,7 @@ function CodeCell({
         {sign ?? " "}
       </span>
       <span className="syntax-highlight min-w-0 break-words">
-        {tokens ? renderHighlightLine(tokens) : value}
+        {renderHighlightLine(displayTokens, emphasisClass)}
       </span>
     </code>
   );
@@ -2675,7 +2730,12 @@ type NumberedAnnotation = Extract<
   { type: "diff" | "annotated-code" }
 >["data"]["annotations"][number] & { marker: number };
 
-function firstAnnotationMarker(
+function annotationRange(annotation: { lines: string }): [number, number] {
+  const [start = 0, end] = annotation.lines.split("-").map(Number);
+  return [start, end ?? start];
+}
+
+function annotationMarkerStartingAt(
   annotations: NumberedAnnotation[],
   side: "before" | "after",
   line?: number,
@@ -2685,51 +2745,78 @@ function firstAnnotationMarker(
   }
   return annotations.find(
     (annotation) =>
-      annotation.side === side && lineInRange(line, annotation.lines),
+      annotation.side === side && annotationRange(annotation)[0] === line,
   )?.marker;
 }
 
-function AnnotationRail({
-  activeAnnotation,
-  annotations,
-  onAnnotationHover,
-}: {
-  activeAnnotation: number | null;
-  annotations: NumberedAnnotation[];
-  onAnnotationHover: (marker: number | null) => void;
-}) {
-  if (annotations.length === 0) {
-    return null;
+function lineHasAnnotation(
+  annotations: NumberedAnnotation[],
+  side: "before" | "after",
+  line?: number,
+) {
+  if (!line) {
+    return false;
   }
+  return annotations.some(
+    (annotation) =>
+      annotation.side === side && lineInRange(line, annotation.lines),
+  );
+}
+
+function annotationRangeLabel(annotation: {
+  side: "before" | "after";
+  lines: string;
+}) {
+  const [start, end] = annotationRange(annotation);
+  const range = end !== start ? `lines ${start}–${end}` : `line ${start}`;
+  return annotation.side === "before" ? `old ${range}` : range;
+}
+
+function AnnotationCard({
+  annotation,
+  blockId,
+  unified,
+}: {
+  annotation: NumberedAnnotation;
+  blockId: string;
+  unified: boolean;
+}) {
   return (
-    <div className="grid gap-2 sm:grid-cols-2 2xl:block 2xl:space-y-2 2xl:pt-10">
-      {annotations.map((annotation) => (
-        // biome-ignore lint/a11y/noStaticElementInteractions: hover-only annotation association; note content is not an interactive control.
-        <div
-          key={`${annotation.marker}:${annotation.side}:${annotation.lines}`}
-          className={`rounded-lg border bg-card p-3 text-sm shadow-sm transition-colors ${
-            activeAnnotation === annotation.marker
-              ? "border-amber-300 bg-amber-50/70"
-              : ""
-          }`}
-          role="presentation"
-          onMouseEnter={() => onAnnotationHover(annotation.marker)}
-          onMouseLeave={() => onAnnotationHover(null)}
-        >
-          <div className="mb-1 flex items-center gap-2 text-xs font-medium text-amber-800">
-            <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-amber-100">
-              {annotation.marker}
-            </span>
-            <span className="font-mono">
-              {annotation.side}:{annotation.lines}
-            </span>
-          </div>
+    <div
+      className={`grid border-b last:border-b-0 ${
+        unified
+          ? "min-w-[560px] grid-cols-[64px_minmax(0,1fr)]"
+          : "min-w-[760px] grid-cols-[64px_minmax(0,1fr)_64px_minmax(0,1fr)]"
+      }`}
+      data-diff-annotation={annotation.marker}
+    >
+      <span className="bg-muted/60" />
+      <div
+        className={`border-l-[3px] border-l-violet-300 bg-violet-50/50 px-3 py-2 font-sans ${
+          unified ? "" : "col-span-3"
+        }`}
+      >
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-violet-100 font-semibold text-violet-800">
+            {annotation.marker}
+          </span>
           {annotation.label ? (
-            <div className="font-medium">{annotation.label}</div>
+            <span className="font-semibold text-violet-900">
+              {annotation.label}
+            </span>
           ) : null}
-          <p className="text-muted-foreground">{annotation.note}</p>
+          <span className="text-violet-700">
+            {annotationRangeLabel(annotation)}
+          </span>
         </div>
-      ))}
+        <p
+          className="mt-1 max-w-[58rem] text-sm leading-6"
+          data-block-id={blockId}
+          data-text-anchorable="true"
+        >
+          {annotation.note}
+        </p>
+      </div>
     </div>
   );
 }
@@ -2737,6 +2824,7 @@ function AnnotationRail({
 type HighlightToken = {
   className?: string;
   text: string;
+  emphasized?: boolean;
 };
 
 type HighlightLine = HighlightToken[];
@@ -2805,17 +2893,28 @@ function flattenLowlightNodes(
   });
 }
 
-function renderHighlightLine(tokens: HighlightLine = []): ReactNode[] {
-  return tokens.map((token, index) =>
-    token.className ? (
-      // biome-ignore lint/suspicious/noArrayIndexKey: lowlight token spans are stateless render output.
-      <span className={token.className} key={`${token.className}:${index}`}>
+function renderHighlightLine(
+  tokens: HighlightLine = [],
+  emphasisClass = "",
+): ReactNode[] {
+  return tokens.map((token, index) => {
+    const className = [token.className, token.emphasized ? emphasisClass : ""]
+      .filter(Boolean)
+      .join(" ");
+    if (!className && !token.emphasized) {
+      return token.text;
+    }
+    return (
+      <span
+        className={className || undefined}
+        data-diff-emphasis={token.emphasized ? "" : undefined}
+        // biome-ignore lint/suspicious/noArrayIndexKey: lowlight token spans are stateless render output.
+        key={`${className}:${index}`}
+      >
         {token.text}
       </span>
-    ) : (
-      token.text
-    ),
-  );
+    );
+  });
 }
 
 function normalizeHighlightLanguage(language?: string) {
