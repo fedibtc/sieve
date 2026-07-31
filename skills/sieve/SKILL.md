@@ -72,10 +72,7 @@ Skip Sieve for trivial diffs where a normal chat summary is enough. Use it when 
 
 5. For UI-facing changes, determine how this repository produces visual evidence. Check project guidance, repository docs, package scripts, CI, and existing screenshot, visual-regression, end-to-end, story, or preview tooling. The developing agent owns that workflow; Sieve does not prescribe a capture or comparison command.
 
-   Publish useful artifacts produced by that workflow with `sieve attach`.
-   Reference screenshot attachment IDs in authored `image-diff` blocks.
-   Reference WebM or MP4 attachment IDs in authored `screen-recording` blocks.
-   A comparison status or diff image must come from the repository's actual tooling; do not infer one from screenshots alone.
+   Publish useful artifacts produced by that workflow with `sieve attach`, then reference the returned attachment IDs in authored blocks: screenshots in `image-diff`, WebM or MP4 recordings in `screen-recording`. A comparison status or diff image must come from the repository's actual tooling; do not infer one from screenshots alone. `sieve attach` also accepts UTF-8 text files, stored as `text/x-patch` attachments that `file-tree` entries can reference through their `patch` field.
 
    If important review evidence is unavailable, say so in chat and make the limitation visible in the review:
 

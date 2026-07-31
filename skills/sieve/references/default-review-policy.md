@@ -55,7 +55,9 @@ A useful default shape is:
 3. Visual artifacts near the outcome when they materially help review.
 4. Contract blocks (`data-model`, `api-endpoint`, `annotated-code`, or
    `mermaid`) before raw diffs when they explain the change better.
-5. A `file-tree` for the complete changed-file footprint.
+5. A `file-tree` for the complete changed-file footprint. `sieve review-pr`
+   attaches each non-excluded file's full patch to its entry, so curated
+   evidence never has to carry the whole diff.
 6. A "Key changes" section with focused implementation evidence when several
    load-bearing surfaces changed.
 7. An optional `question-form` only for a real open question.

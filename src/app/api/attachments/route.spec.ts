@@ -82,6 +82,37 @@ describe("attachment routes", () => {
     expect(Buffer.from(await image.arrayBuffer()).equals(data)).toBe(true);
   });
 
+  it("uploads text patches and streams them back with a charset", async () => {
+    const patch = "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-old\n+new\n";
+    const uploaded = await legacyPost(
+      new Request("http://localhost/api/attachments", {
+        method: "POST",
+        headers: { "content-type": "text/x-patch", host: "localhost" },
+        body: patch,
+      }),
+    );
+    const payload = await uploaded.json();
+    expect(uploaded.status).toBe(201);
+    expect(payload).toMatchObject({
+      mimeType: "text/x-patch",
+      width: null,
+      height: null,
+      existing: false,
+    });
+
+    const streamed = await getAttachment(
+      new Request(`http://localhost/api/attachments/${payload.id}`, {
+        headers: { host: "localhost" },
+      }),
+      { params: Promise.resolve({ id: payload.id }) },
+    );
+    expect(streamed.status).toBe(200);
+    expect(streamed.headers.get("content-type")).toBe(
+      "text/x-patch; charset=utf-8",
+    );
+    expect(await streamed.text()).toBe(patch);
+  });
+
   it("rejects unauthenticated, non-PNG, and oversized requests", async () => {
     const unauthenticated = await legacyPost(
       new Request("https://example.com/api/attachments", {

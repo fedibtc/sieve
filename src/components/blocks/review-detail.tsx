@@ -1310,33 +1310,136 @@ function FileTreeRow({
   entry: Extract<ReviewBlock, { type: "file-tree" }>["data"]["entries"][number];
   onAnchor: (anchor: ReviewAnchor) => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
   return (
-    <button
-      className="grid w-full grid-cols-[36px_minmax(0,1fr)_110px] items-center gap-3 border-b px-3 py-2 text-left text-sm transition-colors last:border-b-0 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      type="button"
-      onClick={() =>
-        onAnchor({
-          blockId,
-          kind: "file",
-          filePath: entry.path,
-        })
-      }
-    >
-      <ChangeBadge change={entry.change} />
-      <span className="min-w-0">
-        <PathLabel path={entry.path} />
-        {entry.note ? (
-          <span className="block truncate text-xs text-muted-foreground">
-            {entry.note}
+    <div className="border-b last:border-b-0">
+      <div className="flex items-stretch">
+        <button
+          className="grid min-w-0 flex-1 grid-cols-[36px_minmax(0,1fr)_110px] items-center gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          type="button"
+          onClick={() =>
+            onAnchor({
+              blockId,
+              kind: "file",
+              filePath: entry.path,
+            })
+          }
+        >
+          <ChangeBadge change={entry.change} />
+          <span className="min-w-0">
+            <PathLabel path={entry.path} />
+            {entry.note ? (
+              <span className="block truncate text-xs text-muted-foreground">
+                {entry.note}
+              </span>
+            ) : null}
           </span>
+          <span className="text-right font-mono text-xs">
+            <span className="text-emerald-700">+{entry.additions ?? 0}</span>{" "}
+            <span className="text-red-700">-{entry.deletions ?? 0}</span>
+          </span>
+        </button>
+        {entry.patch ? (
+          <button
+            className="flex shrink-0 items-center gap-1 px-3 text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            type="button"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((current) => !current)}
+          >
+            <span className="font-mono">{entry.patch.lines} lines</span>
+            <ChevronDown
+              className={`h-3.5 w-3.5 transition-transform ${expanded ? "rotate-180" : ""}`}
+            />
+          </button>
         ) : null}
-      </span>
-      <span className="text-right font-mono text-xs">
-        <span className="text-emerald-700">+{entry.additions ?? 0}</span>{" "}
-        <span className="text-red-700">-{entry.deletions ?? 0}</span>
-      </span>
-    </button>
+      </div>
+      {expanded && entry.patch ? (
+        <PatchPanel attachmentId={entry.patch.attachmentId} />
+      ) : null}
+    </div>
   );
+}
+
+function PatchPanel({ attachmentId }: { attachmentId: string }) {
+  const [patch, setPatch] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/attachments/${attachmentId}`)
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`attachment fetch failed (${response.status})`);
+        }
+        return response.text();
+      })
+      .then((text) => {
+        if (!cancelled) {
+          setPatch(text);
+        }
+      })
+      .catch((cause) => {
+        if (!cancelled) {
+          setError(cause instanceof Error ? cause.message : "fetch failed");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [attachmentId]);
+
+  if (error) {
+    return (
+      <div className="border-t bg-muted/20 px-3 py-2 text-xs text-red-700">
+        Could not load the full patch: {error}
+      </div>
+    );
+  }
+  if (patch === null) {
+    return (
+      <div className="border-t bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+        Loading patch…
+      </div>
+    );
+  }
+  return (
+    <pre className="max-h-96 overflow-auto border-t bg-muted/20 px-3 py-2 font-mono text-xs leading-5">
+      {patch.split("\n").map((line, index) => (
+        <div
+          // biome-ignore lint/suspicious/noArrayIndexKey: patch lines are static once fetched
+          key={index}
+          className={patchLineClass(line)}
+        >
+          {line || " "}
+        </div>
+      ))}
+    </pre>
+  );
+}
+
+function patchLineClass(line: string) {
+  if (line.startsWith("+++") || line.startsWith("---")) {
+    return "text-muted-foreground";
+  }
+  if (line.startsWith("@@")) {
+    return "text-blue-700";
+  }
+  if (line.startsWith("+")) {
+    return "bg-emerald-50/60 text-emerald-800";
+  }
+  if (line.startsWith("-")) {
+    return "bg-red-50/60 text-red-800";
+  }
+  if (
+    line.startsWith("diff --git") ||
+    line.startsWith("index ") ||
+    line.startsWith("new file") ||
+    line.startsWith("deleted file") ||
+    line.startsWith("rename ")
+  ) {
+    return "text-muted-foreground";
+  }
+  return "";
 }
 
 function topLevelDirectory(path: string) {

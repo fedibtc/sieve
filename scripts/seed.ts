@@ -116,8 +116,8 @@ function attachmentRef(attachment: {
   width: number | null;
   height: number | null;
 }) {
-  if (!attachment.width || !attachment.height) {
-    throw new Error("Seed screenshot dimensions are missing");
+  if (attachment.width === null || attachment.height === null) {
+    throw new Error("seed attachments are PNGs and always carry dimensions");
   }
   return {
     attachmentId: attachment.id,

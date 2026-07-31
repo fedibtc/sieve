@@ -14,11 +14,20 @@ import {
 
 export const MAX_ATTACHMENT_BYTES = 2_000_000;
 export const MAX_DIRECT_ATTACHMENT_BYTES = 250_000_000;
+export const PATCH_MIME_TYPE = "text/x-patch";
 export const SUPPORTED_ATTACHMENT_TYPES = [
   "image/png",
   "video/webm",
   "video/mp4",
+  PATCH_MIME_TYPE,
 ] as const;
+
+const ATTACHMENT_EXTENSIONS: Record<SupportedAttachmentType, string> = {
+  "image/png": "png",
+  "video/webm": "webm",
+  "video/mp4": "mp4",
+  [PATCH_MIME_TYPE]: "patch",
+};
 
 const PNG_SIGNATURE = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
@@ -32,6 +41,35 @@ export async function createPngAttachment(input: {
   originalFilename?: string;
 }) {
   const parsed = parsePng(input.data);
+  return upsertAttachment({
+    ...input,
+    mimeType: "image/png",
+    width: parsed.width,
+    height: parsed.height,
+  });
+}
+
+export async function createPatchAttachment(input: {
+  data: Buffer;
+  createdByUserId: string;
+}) {
+  parsePatch(input.data);
+  return upsertAttachment({
+    ...input,
+    mimeType: PATCH_MIME_TYPE,
+    width: null,
+    height: null,
+  });
+}
+
+async function upsertAttachment(input: {
+  data: Buffer;
+  createdByUserId: string;
+  mimeType: SupportedAttachmentType;
+  width: number | null;
+  height: number | null;
+  originalFilename?: string;
+}) {
   const sha256 = createHash("sha256").update(input.data).digest("hex");
   const existing = await getReadyAttachmentByHash(sha256);
   if (existing) {
@@ -39,22 +77,25 @@ export async function createPngAttachment(input: {
   }
 
   const db = await getDb();
-  const originalFilename = input.originalFilename ?? "screenshot.png";
+  const originalFilename = basename(
+    input.originalFilename ??
+      `attachment.${ATTACHMENT_EXTENSIONS[input.mimeType]}`,
+  );
   if (isVercelBlobConfigured()) {
-    const storageKey = attachmentStoragePathname(sha256, "image/png");
+    const storageKey = attachmentStoragePathname(sha256, input.mimeType);
     await putAttachmentInBlob({
       pathname: storageKey,
       data: input.data,
-      mimeType: "image/png",
+      mimeType: input.mimeType,
     });
     const [created] = await db
       .insert(attachments)
       .values({
         sha256,
-        mimeType: "image/png",
+        mimeType: input.mimeType,
         bytes: input.data.byteLength,
-        width: parsed.width,
-        height: parsed.height,
+        width: input.width,
+        height: input.height,
         originalFilename,
         storageProvider: "vercel-blob",
         storageKey,
@@ -74,10 +115,10 @@ export async function createPngAttachment(input: {
     .insert(attachments)
     .values({
       sha256,
-      mimeType: "image/png",
+      mimeType: input.mimeType,
       bytes: input.data.byteLength,
-      width: parsed.width,
-      height: parsed.height,
+      width: input.width,
+      height: input.height,
       originalFilename,
       status: "ready",
       data: input.data,
@@ -275,6 +316,21 @@ export function parsePng(data: Buffer, maximumBytes = MAX_ATTACHMENT_BYTES) {
   return { width, height };
 }
 
+export function parsePatch(data: Buffer) {
+  if (data.byteLength > MAX_ATTACHMENT_BYTES) {
+    throw new Error("Attachment exceeds the 2 MB limit");
+  }
+  if (data.byteLength === 0) {
+    throw new Error("Patch attachments cannot be empty");
+  }
+  const text = new TextDecoder("utf-8", { fatal: true });
+  try {
+    text.decode(data);
+  } catch {
+    throw new Error("Patch attachments must be valid UTF-8 text");
+  }
+}
+
 export function attachmentResponse(attachment: {
   id: string;
   sha256: string;
@@ -316,7 +372,7 @@ function validateAttachmentReservation(input: {
       input.mimeType as SupportedAttachmentType,
     )
   ) {
-    throw new Error("Only PNG, WebM, and MP4 attachments are supported");
+    throw new Error("Only PNG, WebM, MP4, and patch attachments are supported");
   }
   if (
     !Number.isInteger(input.bytes) ||
@@ -347,12 +403,7 @@ export function attachmentStoragePathname(
   sha256: string,
   mimeType: SupportedAttachmentType,
 ) {
-  const extension = {
-    "image/png": "png",
-    "video/webm": "webm",
-    "video/mp4": "mp4",
-  }[mimeType];
-  return `attachments/${sha256}.${extension}`;
+  return `attachments/${sha256}.${ATTACHMENT_EXTENSIONS[mimeType]}`;
 }
 
 async function getAttachmentByHashRecord(sha256: string) {
