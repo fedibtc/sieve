@@ -62,7 +62,7 @@ type Review = {
   agentName: string | null;
 };
 
-type ThreadComment = {
+export type ThreadComment = {
   id: string;
   message: string;
   anchor: ReviewAnchor | null;
@@ -77,7 +77,7 @@ type ThreadComment = {
   createdBy: "human" | "agent";
 };
 
-type Thread = {
+export type Thread = {
   root: ThreadComment;
   replies: ThreadComment[];
 };
@@ -545,7 +545,7 @@ function textAnchorContainer(node: Node | null) {
   return element?.closest<HTMLElement>("[data-text-anchorable][data-block-id]");
 }
 
-function BlocksList({
+export function BlocksList({
   blocks,
   threadsByBlock,
   onAnchor,
