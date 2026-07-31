@@ -186,8 +186,10 @@ test("the diff header sticks under the app chrome while scrolling", async ({
     { length: 60 },
     (_, index) => `old ${index + 1}`,
   ).join("\n");
-  const after = Array.from({ length: 60 }, (_, index) => `new ${index + 1}`)
-    .join("\n");
+  const after = Array.from(
+    { length: 60 },
+    (_, index) => `new ${index + 1}`,
+  ).join("\n");
   const published = await publishFixtureReview(request, {
     title: "Sticky diff header",
     blocks: [
