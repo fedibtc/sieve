@@ -1,6 +1,6 @@
-# Publishing sieve reviews on an org repo
+# Publishing sieve reviews on every PR push
 
-Any repo in the org can publish sieve reviews by adding one caller workflow that delegates to the reusable workflow in this repo. Fedi runs its own NixOS review workflow; every other repo uses this.
+Most repos should not use this. The default way to get a review on any org repo is the hub in fedi, which needs no workflow file or secrets in the target repo (see `docs/org-reviews.md`). The reusable workflow here is for a repo that wants a review published automatically on every PR push, and it publishes a mechanical recap of the diff rather than the agent-authored review the hub produces.
 
 When a same-repo PR is opened or updated, a review is published from its diff and a sticky comment links it. Pushes update the same review in place. Fork PRs are skipped, since they get no secrets.
 
@@ -25,7 +25,9 @@ concurrency:
 
 jobs:
   review:
-    uses: fedibtc/sieve/.github/workflows/review.yml@v0.4.2
+    uses: fedibtc/sieve/.github/workflows/review.yml@v0.5.2
+    with:
+      sieve_version: v0.5.2
     secrets:
       SIEVE_TOKEN: ${{ secrets.SIEVE_TOKEN }}
 ```
@@ -40,4 +42,4 @@ jobs:
 Override the reusable workflow's defaults under `with:` if needed:
 
 - `sieve_host` (default `https://sieve.fedi.xyz`)
-- `sieve_version`: the release tag whose binary is installed (default `v0.4.2`, the first release shipping `sieve review-pr`)
+- `sieve_version`: the release tag whose binary is installed. Pin it to the same release as the `uses:` ref, since the workflow default trails the newest release

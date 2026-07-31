@@ -33,7 +33,7 @@ The CLI defaults to `https://sieve.fedi.xyz`. Mint a token in Sieve at
 `SIEVE_HOST=http://localhost:7919` or pass `--host`; localhost intentionally
 supports tokenless requests.
 
-See `docs/connect.md` for agent setup and `docs/fedi-dev-shell.md` for the fedi dev-shell integration shape.
+See `docs/connect.md` for agent setup and `docs/fedi-dev-shell.md` for the fedi dev-shell integration shape. To trigger a review on a PR in any org repo, see `docs/org-reviews.md`.
 
 ## Local Dev
 
