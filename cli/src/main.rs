@@ -71,7 +71,7 @@ enum Commands {
     Status,
     Scaffold(ScaffoldArgs),
     Publish(PublishArgs),
-    ReviewPr,
+    ReviewPr(ReviewPrArgs),
     Get(ReviewId),
     List(ListArgs),
     Feedback(ReviewId),
@@ -126,6 +126,14 @@ struct PublishArgs {
     manifest: PathBuf,
     #[command(flatten)]
     options: PublishOptions,
+}
+
+#[derive(Args)]
+struct ReviewPrArgs {
+    /// Write the mechanical manifest here instead of publishing it, so an
+    /// author can turn the recap into a claim and publish it themselves.
+    #[arg(long)]
+    manifest_out: Option<PathBuf>,
 }
 
 #[derive(Args, Clone, Default)]
@@ -342,7 +350,7 @@ fn run(cli: Cli, json_output: bool) -> Result<()> {
         Commands::Status => status(&client),
         Commands::Scaffold(args) => scaffold(args),
         Commands::Publish(args) => publish(&client, args),
-        Commands::ReviewPr => review_pr(&client),
+        Commands::ReviewPr(args) => review_pr(&client, args),
         Commands::Get(args) => client.get(&format!("/api/agent/v1/reviews/{}", args.review_id)),
         Commands::List(args) => list(&client, args),
         Commands::Feedback(args) => feedback(&client, args),
@@ -777,7 +785,7 @@ fn publish_manifest(
     Ok(result)
 }
 
-fn review_pr(client: &ApiClient) -> Result<Value> {
+fn review_pr(client: &ApiClient, args: ReviewPrArgs) -> Result<Value> {
     let pr_raw = command_output(
         "gh",
         &["pr", "view", "--json", "number,title,url,baseRefName"],
@@ -818,6 +826,14 @@ fn review_pr(client: &ApiClient) -> Result<Value> {
     }
     enrich_scaffold(&mut manifest, pr_number, &pr_title, &pr_url, &base_ref);
     attach_full_patches(client, &mut manifest, &format!("origin/{base_ref}"), "HEAD")?;
+    if let Some(path) = args.manifest_out {
+        fs::write(&path, serde_json::to_string_pretty(&manifest)?)?;
+        return Ok(json!({
+            "manifest": path,
+            "prNumber": pr_number,
+            "baseRef": format!("origin/{base_ref}"),
+        }));
+    }
     // An unattended publish cannot stop to triage redaction findings the way
     // an agent running plain `publish` can, so token-looking spans in the
     // diff are masked instead of blocking the review.
