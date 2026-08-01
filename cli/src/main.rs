@@ -2135,6 +2135,12 @@ fn change_name(status: &str) -> String {
 }
 
 fn expand_manifest(manifest: &mut Value, allow_unverified: bool) -> Result<Vec<String>> {
+    // CI checkouts clone the head branch only, so a bare `master` may not resolve.
+    let base_ref = manifest
+        .get("baseRef")
+        .and_then(Value::as_str)
+        .unwrap_or("master")
+        .to_string();
     let blocks = manifest
         .pointer_mut("/content/blocks")
         .and_then(Value::as_array_mut)
@@ -2157,7 +2163,7 @@ fn expand_manifest(manifest: &mut Value, allow_unverified: bool) -> Result<Vec<S
                         "literal diff `{filename}` was not verified because --allow-unverified-diffs was set"
                     ));
                 } else {
-                    verify_literal_diff(&block)?;
+                    verify_literal_diff(&block, &base_ref)?;
                 }
             }
             expanded.push(block);
@@ -2421,7 +2427,7 @@ fn parse_hunk_start(value: &str) -> Option<usize> {
     value.split(',').next()?.parse().ok()
 }
 
-fn verify_literal_diff(block: &Value) -> Result<()> {
+fn verify_literal_diff(block: &Value, base_ref: &str) -> Result<()> {
     let Some(filename) = block.pointer("/data/filename").and_then(Value::as_str) else {
         return Ok(());
     };
@@ -2433,7 +2439,7 @@ fn verify_literal_diff(block: &Value) -> Result<()> {
         .pointer("/data/after")
         .and_then(Value::as_str)
         .unwrap_or("");
-    let base_blob = git(["show", &format!("master:{filename}")]).unwrap_or_default();
+    let base_blob = git(["show", &format!("{base_ref}:{filename}")]).unwrap_or_default();
     let head_blob = fs::read_to_string(filename).unwrap_or_default();
     if !base_blob.contains(before) || !head_blob.contains(after) {
         bail!("literal diff block `{}` did not match git blobs", filename);
@@ -3502,6 +3508,54 @@ mod tests {
         let warnings = expand_manifest(&mut manifest, true).unwrap();
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("--allow-unverified-diffs"));
+    }
+
+    #[test]
+    fn verifies_literal_diffs_against_the_manifest_base_ref() {
+        let _guard = CWD_LOCK.lock().unwrap();
+        let previous_dir = env::current_dir().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        git_test(repo.path(), &["init", "-b", "trunk"]);
+        git_test(repo.path(), &["config", "user.email", "test@localhost"]);
+        git_test(repo.path(), &["config", "user.name", "Test"]);
+        fs::write(repo.path().join("lib.rs"), "old line\nshared line\n").unwrap();
+        git_test(repo.path(), &["add", "."]);
+        git_test(repo.path(), &["commit", "-m", "base"]);
+        git_test(repo.path(), &["checkout", "-b", "feature"]);
+        fs::write(repo.path().join("lib.rs"), "new line\nshared line\n").unwrap();
+        env::set_current_dir(repo.path()).unwrap();
+
+        let block = json!({
+            "id": "diff",
+            "type": "diff",
+            "summary": "manual",
+            "data": {
+                "filename": "lib.rs",
+                "before": "old line",
+                "after": "new line",
+                "mode": "split",
+                "annotations": []
+            }
+        });
+        let mut manifest = json!({
+            "baseRef": "trunk",
+            "content": { "version": 1, "blocks": [block.clone()] }
+        });
+        expand_manifest(&mut manifest, false).unwrap();
+
+        // The `master` fallback has no local branch here, so verification fails.
+        let mut defaulted = json!({
+            "content": { "version": 1, "blocks": [block] }
+        });
+        let error = expand_manifest(&mut defaulted, false).unwrap_err();
+        assert!(error.to_string().contains("did not match git blobs"));
+
+        let mut wrong_before = manifest.clone();
+        wrong_before["content"]["blocks"][0]["data"]["before"] = json!("never committed");
+        let error = expand_manifest(&mut wrong_before, false).unwrap_err();
+        assert!(error.to_string().contains("did not match git blobs"));
+
+        env::set_current_dir(previous_dir).unwrap();
     }
 
     #[test]
