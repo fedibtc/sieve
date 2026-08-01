@@ -3007,6 +3007,10 @@ function MermaidBlock({
           securityLevel: "strict",
           startOnLoad: false,
           theme: "neutral",
+          // sanitizeSvg strips foreignObject, which is where html labels
+          // live, so diagrams must label with svg text.
+          htmlLabels: false,
+          flowchart: { htmlLabels: false },
         });
         const rendered = await mermaid.render(
           `diagram-${hash(source)}`,
