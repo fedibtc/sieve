@@ -3,6 +3,7 @@
 import { diffLines } from "diff";
 import { common, createLowlight } from "lowlight";
 import {
+  ArrowLeft,
   Bot,
   Check,
   ChevronDown,
@@ -25,9 +26,12 @@ import {
 import Image from "next/image";
 import Link from "next/link";
 import {
+  createContext,
   Fragment,
   type ReactNode,
   type RefObject,
+  useCallback,
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -547,6 +551,94 @@ function textAnchorContainer(node: Node | null) {
   return element?.closest<HTMLElement>("[data-text-anchorable][data-block-id]");
 }
 
+type EvidenceLinks = {
+  targets: Map<string, string>;
+  onJump: (label: string, blockId: string, origin: HTMLElement) => void;
+};
+
+const EvidenceLinkContext = createContext<EvidenceLinks | null>(null);
+
+// Older reviews name their evidence by block id and newer ones by filename, so
+// dropping either key breaks the links on everything already published.
+function buildEvidenceTargets(blocks: ReviewBlock[]) {
+  const targets = new Map<string, string>();
+  for (const block of blocks) {
+    if (block.type !== "diff" && block.type !== "annotated-code") {
+      continue;
+    }
+    if (!targets.has(block.id)) {
+      targets.set(block.id, block.id);
+    }
+    const filename = block.data.filename;
+    if (filename && !targets.has(filename)) {
+      targets.set(filename, block.id);
+    }
+  }
+  return targets;
+}
+
+function markdownText(children: ReactNode): string {
+  if (typeof children === "string") {
+    return children;
+  }
+  if (Array.isArray(children)) {
+    return children.map(markdownText).join("");
+  }
+  return "";
+}
+
+function EvidenceCode({
+  className,
+  children,
+  ...props
+}: {
+  className?: string;
+  children?: ReactNode;
+}) {
+  const links = useContext(EvidenceLinkContext);
+  const label = markdownText(children).trim();
+  // A className means a fenced block, which is a code sample rather than a reference.
+  const blockId = className ? undefined : links?.targets.get(label);
+
+  if (!links || !blockId) {
+    return (
+      <code className={className} {...props}>
+        {children}
+      </code>
+    );
+  }
+
+  return (
+    <button
+      className="cursor-pointer rounded bg-muted px-1 py-0.5 font-mono text-[0.85em] text-foreground underline decoration-dotted underline-offset-2 transition-colors hover:bg-primary/10 hover:decoration-solid"
+      type="button"
+      title={evidenceLinkTitle(label)}
+      onClick={(event) => links.onJump(label, blockId, event.currentTarget)}
+    >
+      {children}
+    </button>
+  );
+}
+
+const markdownComponents = { code: EvidenceCode };
+
+function evidenceLinkTitle(label: string) {
+  return `Jump to the evidence in ${label}`;
+}
+
+// A rerender between the jump and the trip back detaches the clicked element.
+function resolveJumpOrigin(origin: HTMLElement, label: string) {
+  if (document.contains(origin)) {
+    return origin;
+  }
+  const wanted = evidenceLinkTitle(label);
+  return (
+    Array.from(document.querySelectorAll<HTMLElement>("button[title]")).find(
+      (button) => button.title === wanted,
+    ) ?? null
+  );
+}
+
 export function BlocksList({
   blocks,
   threadsByBlock,
@@ -558,6 +650,21 @@ export function BlocksList({
   onAnchor: (anchor: ReviewAnchor) => void;
   onAnswer: (anchor: ReviewAnchor, answer: string) => void;
 }) {
+  const [returnTo, setReturnTo] = useState<{
+    label: string;
+    origin: HTMLElement;
+  } | null>(null);
+  const targets = useMemo(() => buildEvidenceTargets(blocks), [blocks]);
+  const onJump = useCallback(
+    (label: string, blockId: string, origin: HTMLElement) => {
+      setReturnTo({ label, origin });
+      activateBlockTab(blockId);
+      window.setTimeout(() => scrollToElement(blockId), 0);
+    },
+    [],
+  );
+  const evidenceLinks = useMemo(() => ({ targets, onJump }), [targets, onJump]);
+
   const items: ReactNode[] = [];
   let index = 0;
   while (index < blocks.length) {
@@ -621,7 +728,46 @@ export function BlocksList({
     index += 1;
   }
 
-  return items;
+  return (
+    <EvidenceLinkContext.Provider value={evidenceLinks}>
+      {items}
+      {returnTo ? (
+        <ReturnToProse
+          label={returnTo.label}
+          onReturn={() => {
+            const origin = resolveJumpOrigin(returnTo.origin, returnTo.label);
+            if (origin) {
+              origin.scrollIntoView({ block: "center", behavior: "smooth" });
+              flashDomElement(origin);
+            }
+            setReturnTo(null);
+          }}
+        />
+      ) : null}
+    </EvidenceLinkContext.Provider>
+  );
+}
+
+function ReturnToProse({
+  label,
+  onReturn,
+}: {
+  label: string;
+  onReturn: () => void;
+}) {
+  return (
+    <div className="pointer-events-none sticky bottom-6 z-30 flex justify-center">
+      <Button
+        className="pointer-events-auto shadow-lg"
+        size="sm"
+        variant="secondary"
+        onClick={onReturn}
+      >
+        <ArrowLeft className="h-4 w-4" />
+        Back to the finding about <span className="font-mono">{label}</span>
+      </Button>
+    </div>
+  );
 }
 
 function isKeyChangesSection(block: ReviewBlock | undefined) {
@@ -832,7 +978,10 @@ function BlockRenderer({
           data-block-id={block.id}
           data-text-anchorable="true"
         >
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+          <ReactMarkdown
+            components={markdownComponents}
+            remarkPlugins={[remarkGfm]}
+          >
             {block.data.markdown}
           </ReactMarkdown>
         </div>
@@ -980,7 +1129,10 @@ function CalloutBlock({
       data-text-anchorable="true"
     >
       <div className="recap-prose max-w-[58rem]">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+        <ReactMarkdown
+          components={markdownComponents}
+          remarkPlugins={[remarkGfm]}
+        >
           {block.data.markdown}
         </ReactMarkdown>
       </div>

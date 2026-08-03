@@ -403,6 +403,48 @@ export function keyChangesGroup(): ReviewBlock[] {
   ];
 }
 
+export function keyChangesWithProseReference(): ReviewBlock[] {
+  return [
+    {
+      id: "summary",
+      type: "rich-text",
+      summary: "Summary",
+      data: {
+        markdown:
+          "Finding 1: the flag defaults the wrong way (`src/flags/beta.ts`).\n\n```ts\nsrc/flags/beta.ts\n```\n",
+      },
+    },
+    {
+      id: "key-changes",
+      type: "section",
+      data: { title: "Key changes" },
+    },
+    {
+      id: "key-alpha",
+      type: "diff",
+      summary: "Where the flag is read",
+      data: {
+        filename: "src/callers/alpha.ts",
+        language: "ts",
+        before: "const alpha = false;\n",
+        after: "const alpha = true;\n",
+        annotations: [],
+      },
+    },
+    {
+      id: "key-beta",
+      type: "annotated-code",
+      summary: "Where the flag is defined",
+      data: {
+        filename: "src/flags/beta.ts",
+        language: "ts",
+        code: "export const beta = true;\n",
+        annotations: [],
+      },
+    },
+  ];
+}
+
 export function maliciousMermaid(): ReviewBlock[] {
   return [
     {
