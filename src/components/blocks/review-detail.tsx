@@ -6,6 +6,8 @@ import {
   Bot,
   Check,
   ChevronDown,
+  ChevronsDownUp,
+  ChevronsUpDown,
   Code2,
   Database,
   ExternalLink,
@@ -841,9 +843,10 @@ function EvidenceGroup({
             <span />
           )}
           {blocks.length > 1 ? (
-            <button
-              className="shrink-0 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              type="button"
+            <Button
+              className="shrink-0"
+              size="sm"
+              variant="outline"
               onClick={() =>
                 setOpenIds(
                   allOpen
@@ -852,8 +855,13 @@ function EvidenceGroup({
                 )
               }
             >
+              {allOpen ? (
+                <ChevronsDownUp className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronsUpDown className="h-3.5 w-3.5" />
+              )}
               {allOpen ? "Collapse all" : "Expand all"}
-            </button>
+            </Button>
           ) : null}
         </div>
       ) : null}
@@ -933,13 +941,16 @@ function EvidenceCard({
       >
         <button
           aria-expanded={open}
-          className="flex min-w-0 flex-1 items-start gap-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="group/toggle -m-1 flex min-w-0 flex-1 cursor-pointer items-start gap-2 rounded-md p-1 text-left transition-colors hover:bg-foreground/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          title={open ? "Collapse evidence" : "Expand evidence"}
           type="button"
           onClick={onToggle}
         >
           <ChevronDown
-            className={`mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform ${
-              open ? "" : "-rotate-90"
+            className={`mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-all group-hover/toggle:translate-y-0.5 group-hover/toggle:text-foreground ${
+              open
+                ? ""
+                : "-rotate-90 group-hover/toggle:translate-y-0 group-hover/toggle:translate-x-0.5"
             }`}
           />
           <span className="min-w-0">
@@ -979,7 +990,7 @@ function EvidenceCard({
         <div className="flex shrink-0 items-center gap-2">
           {threads.length > 0 ? (
             <button
-              className="inline-flex items-center gap-1 rounded-full border bg-card px-2 py-0.5 text-xs font-medium text-amber-700 transition-colors hover:bg-amber-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="inline-flex cursor-pointer items-center gap-1 rounded-full border bg-card px-2 py-0.5 text-xs font-medium text-amber-700 transition-colors hover:bg-amber-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               title={`${threads.length} anchored thread${threads.length === 1 ? "" : "s"}`}
               type="button"
               onClick={() => scrollToThread(threads[0]?.root.id)}
@@ -1003,7 +1014,7 @@ function EvidenceCard({
               {(["split", "unified"] as const).map((item) => (
                 <button
                   key={item}
-                  className={`rounded px-2 py-1 text-xs transition-colors ${
+                  className={`cursor-pointer rounded px-2 py-1 text-xs transition-colors ${
                     view.mode === item
                       ? "bg-primary text-primary-foreground"
                       : "text-muted-foreground hover:bg-accent"
@@ -1018,7 +1029,7 @@ function EvidenceCard({
           ) : null}
           <button
             aria-label="Comment on block"
-            className="inline-flex h-7 w-7 items-center justify-center rounded-full border bg-card text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100"
+            className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-full border bg-card text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100"
             title="Comment on block"
             type="button"
             onClick={() => onAnchor({ blockId: block.id, kind: "block" })}
