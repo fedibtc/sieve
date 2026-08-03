@@ -2,32 +2,103 @@ import { publishFixtureReview } from "../helpers/api";
 import { expectHittable } from "../helpers/assertions";
 import { expect, test } from "../helpers/fixtures";
 
-test("diff mode persists and syncs across tabs", async ({ context, page }) => {
-  await page.goto("/reviews/seed-credential-app-qr");
-  await page.getByRole("button", { name: "Unified" }).click();
+test("unified is the default and split applies to every diff at once", async ({
+  context,
+  page,
+  request,
+}) => {
+  const published = await publishFixtureReview(request, {
+    title: "Global diff view",
+    blocks: [
+      { id: "evidence", type: "section", data: { title: "Evidence" } },
+      {
+        id: "diff-one",
+        type: "diff",
+        summary: "First claim",
+        data: {
+          filename: "src/one.ts",
+          language: "ts",
+          before: "const one = 1;\n",
+          after: "const one = 2;\n",
+          annotations: [],
+        },
+      },
+      {
+        id: "diff-two",
+        type: "diff",
+        summary: "Second claim",
+        data: {
+          filename: "src/two.ts",
+          language: "ts",
+          before: "const two = 1;\n",
+          after: "const two = 2;\n",
+          annotations: [],
+        },
+      },
+    ],
+  });
+  await page.goto(published.url);
+  await page.getByRole("button", { name: "Expand all" }).click();
+
+  // Unified in every card with nothing stored: it is the default, not a choice.
+  const unifiedButtons = page.getByRole("button", {
+    exact: true,
+    name: "unified",
+  });
+  await expect(unifiedButtons).toHaveCount(2);
+  for (const button of await unifiedButtons.all()) {
+    await expect(button).toHaveClass(/bg-primary/);
+  }
   expect(
     await page.evaluate(() => localStorage.getItem("sieve:diff-view-mode")),
-  ).toBe("unified");
+  ).toBeNull();
+
+  await page
+    .locator("article#diff-one")
+    .getByRole("button", { exact: true, name: "split" })
+    .click();
+  for (const button of await page
+    .getByRole("button", { exact: true, name: "split" })
+    .all()) {
+    await expect(button).toHaveClass(/bg-primary/);
+  }
+  expect(
+    await page.evaluate(() => localStorage.getItem("sieve:diff-view-mode")),
+  ).toBe("split");
 
   await page.reload();
-  await expect(page.getByRole("button", { name: "Unified" })).toHaveClass(
-    /bg-primary/,
-  );
+  await page.getByRole("button", { name: "Expand all" }).click();
+  await expect(
+    page
+      .locator("article#diff-two")
+      .getByRole("button", { exact: true, name: "split" }),
+  ).toHaveClass(/bg-primary/);
 
+  // Another tab follows through the storage event.
   const second = await context.newPage();
-  await second.goto("/reviews/seed-credential-app-qr");
-  await page.getByRole("button", { name: "Split" }).click();
+  await second.goto(published.url);
+  await second.getByRole("button", { name: "Expand all" }).click();
+  await page
+    .locator("article#diff-one")
+    .getByRole("button", { exact: true, name: "unified" })
+    .click();
   await expect
     .poll(() =>
       second.evaluate(() => localStorage.getItem("sieve:diff-view-mode")),
     )
-    .toBe("split");
+    .toBe("unified");
+  await expect(
+    second
+      .locator("article#diff-two")
+      .getByRole("button", { exact: true, name: "unified" }),
+  ).toHaveClass(/bg-primary/);
 });
 
 test("gutter comment controls reveal on hover and set a line anchor", async ({
   page,
 }) => {
   await page.goto("/reviews/seed-credential-app-qr");
+  await page.getByRole("button", { name: "Expand all" }).click();
   const button = page.getByTitle(/Comment on after line/).first();
   await button.locator("..").hover();
   await expectHittable(button);
@@ -247,7 +318,7 @@ test("long split lines stay inside their own side", async ({
 
   await page.goto(published.url);
   const diff = page.locator("article#long-split-lines");
-  await diff.getByRole("button", { name: "Split" }).click();
+  await diff.getByRole("button", { exact: true, name: "split" }).click();
   const cells = diff.locator("[data-diff-code-cell]");
   await expect(cells).toHaveCount(2);
   await expect

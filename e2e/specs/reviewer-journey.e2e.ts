@@ -32,10 +32,11 @@ test("seeded reviewer journey composes read-only interactions", async ({
   await endpoint.click();
   await expect(page.getByText("roundTrip")).toBeVisible();
 
-  await page.getByRole("button", { name: "Unified" }).click();
-  expect(
-    await page.evaluate(() => localStorage.getItem("sieve:diff-view-mode")),
-  ).toBe("unified");
+  // Evidence cards start collapsed; expanding reveals the unified default.
+  await page.getByRole("button", { name: "Expand all" }).click();
+  await expect(
+    page.getByRole("button", { exact: true, name: "unified" }),
+  ).toHaveClass(/bg-primary/);
 
   // Authored annotations read inline beside their lines without hovering.
   await expect(
@@ -76,11 +77,8 @@ test("seeded reviewer journey composes read-only interactions", async ({
     0,
   );
 
-  expect(
-    await page.evaluate(() => localStorage.getItem("sieve:diff-view-mode")),
-  ).toBe("unified");
-
   await page
+    .locator("article#footprint")
     .getByRole("button", {
       name: /src\/credential\/domain\/qrPayloads\.property\.test\.ts/,
     })

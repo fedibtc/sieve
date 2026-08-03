@@ -53,6 +53,8 @@ test("all block types render and key per-block controls have effects", async ({
   await endpoint.click();
   await expect(page.getByText(/Review id/)).toHaveCount(0);
 
+  // The code and diff blocks form an evidence set, collapsed by default.
+  await page.getByRole("button", { name: "Expand all" }).click();
   await page.getByRole("button", { name: /Show all .* lines/ }).click();
   await expect(page.getByText("line36();")).toBeVisible();
 

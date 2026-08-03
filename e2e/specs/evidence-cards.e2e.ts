@@ -7,12 +7,12 @@ import {
 import { expectBelowStickyChrome } from "../helpers/assertions";
 import { expect, test } from "../helpers/fixtures";
 
-test("key changes group renders as tabs and thread anchors activate hidden tabs", async ({
+test("an evidence set renders as collapsed claim cards and thread anchors expand the right card", async ({
   page,
   request,
 }) => {
   const published = await publishFixtureReview(request, {
-    title: "Key changes tabs",
+    title: "Evidence cards",
     blocks: keyChangesGroup(),
   });
   await addBrowserComment(request, published.review.id, {
@@ -25,16 +25,19 @@ test("key changes group renders as tabs and thread anchors activate hidden tabs"
   await expect(
     page.getByRole("heading", { level: 2, name: "Key changes" }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: /src\/one\.ts|First file/ }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: /src\/two\.ts|Second file/ }).click();
+
+  await expect(page.getByText("First file", { exact: true })).toBeVisible();
+  await expect(page.getByText("Second file", { exact: true })).toBeVisible();
+  await expect(page.getByText("export const two = true;")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Expand all" }).click();
+  await expect(page.getByText("const one = true;")).toBeVisible();
   await expect(page.getByText("export const two = true;")).toBeVisible();
 
-  await page.getByRole("button", { name: /src\/one\.ts|First file/ }).click();
+  await page.getByRole("button", { name: "Collapse all" }).click();
   await expect(page.getByText("export const two = true;")).toHaveCount(0);
+
   await page.getByRole("link", { name: "key-code-two" }).click();
-  await page.getByRole("button", { name: /src\/two\.ts|Second file/ }).click();
   await expect(page.getByText("export const two = true;")).toBeVisible();
   await expectBelowStickyChrome(
     page,
@@ -42,7 +45,7 @@ test("key changes group renders as tabs and thread anchors activate hidden tabs"
   );
 });
 
-test("a finding's evidence reference opens the matching tab and offers the way back", async ({
+test("a finding's evidence reference expands the card and the back button returns", async ({
   page,
   request,
 }) => {
@@ -61,12 +64,29 @@ test("a finding's evidence reference opens the matching tab and offers the way b
 
   await reference.click();
   await expect(page.getByText("export const beta = true;")).toBeVisible();
+  await expect(page).toHaveURL(/#key-beta$/);
 
-  const back = page.getByRole("button", { name: /Back to the finding about/ });
-  await expect(back).toBeVisible();
-  await back.click();
-  await expect(back).toHaveCount(0);
+  // The jump is a history entry, so the browser back button is the way back.
+  await page.goBack();
+  await expect(page).not.toHaveURL(/#key-beta/);
   await expect(reference).toBeInViewport();
+});
+
+test("a deep link to an evidence block opens its card on load", async ({
+  page,
+  request,
+}) => {
+  const published = await publishFixtureReview(request, {
+    title: "Evidence deep link",
+    blocks: keyChangesWithProseReference(),
+  });
+
+  await page.goto(`/reviews/${published.review.id}#key-beta`);
+  await expect(page.getByText("export const beta = true;")).toBeVisible();
+  await expectBelowStickyChrome(
+    page,
+    page.getByText("export const beta = true;"),
+  );
 });
 
 test("a fenced code sample that reads like a filename stays plain text", async ({
