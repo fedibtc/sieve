@@ -1,6 +1,7 @@
 import {
   addBrowserComment,
   keyChangesGroup,
+  keyChangesWithProseReference,
   publishFixtureReview,
 } from "../helpers/api";
 import { expectBelowStickyChrome } from "../helpers/assertions";
@@ -39,4 +40,46 @@ test("key changes group renders as tabs and thread anchors activate hidden tabs"
     page,
     page.getByText("export const two = true;"),
   );
+});
+
+test("a finding's evidence reference opens the matching tab and offers the way back", async ({
+  page,
+  request,
+}) => {
+  const published = await publishFixtureReview(request, {
+    title: "Evidence references",
+    blocks: keyChangesWithProseReference(),
+  });
+
+  await page.goto(`/reviews/${published.review.id}`);
+  const reference = page.getByRole("button", {
+    name: "src/flags/beta.ts",
+    exact: true,
+  });
+  await expect(reference).toBeVisible();
+  await expect(page.getByText("export const beta = true;")).toHaveCount(0);
+
+  await reference.click();
+  await expect(page.getByText("export const beta = true;")).toBeVisible();
+
+  const back = page.getByRole("button", { name: /Back to the finding about/ });
+  await expect(back).toBeVisible();
+  await back.click();
+  await expect(back).toHaveCount(0);
+  await expect(reference).toBeInViewport();
+});
+
+test("a fenced code sample that reads like a filename stays plain text", async ({
+  page,
+  request,
+}) => {
+  const published = await publishFixtureReview(request, {
+    title: "Fenced samples are not references",
+    blocks: keyChangesWithProseReference(),
+  });
+
+  await page.goto(`/reviews/${published.review.id}`);
+  await expect(
+    page.getByRole("button", { name: "src/flags/beta.ts", exact: true }),
+  ).toHaveCount(1);
 });
