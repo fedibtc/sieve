@@ -3,10 +3,11 @@
 import { diffLines } from "diff";
 import { common, createLowlight } from "lowlight";
 import {
-  ArrowLeft,
   Bot,
   Check,
   ChevronDown,
+  ChevronsDownUp,
+  ChevronsUpDown,
   Code2,
   Database,
   ExternalLink,
@@ -553,7 +554,7 @@ function textAnchorContainer(node: Node | null) {
 
 type EvidenceLinks = {
   targets: Map<string, string>;
-  onJump: (label: string, blockId: string, origin: HTMLElement) => void;
+  onJump: (blockId: string) => void;
 };
 
 const EvidenceLinkContext = createContext<EvidenceLinks | null>(null);
@@ -613,7 +614,7 @@ function EvidenceCode({
       className="cursor-pointer rounded bg-muted px-1 py-0.5 font-mono text-[0.85em] text-foreground underline decoration-dotted underline-offset-2 transition-colors hover:bg-primary/10 hover:decoration-solid"
       type="button"
       title={evidenceLinkTitle(label)}
-      onClick={(event) => links.onJump(label, blockId, event.currentTarget)}
+      onClick={() => links.onJump(blockId)}
     >
       {children}
     </button>
@@ -626,17 +627,79 @@ function evidenceLinkTitle(label: string) {
   return `Jump to the evidence in ${label}`;
 }
 
-// A rerender between the jump and the trip back detaches the clicked element.
-function resolveJumpOrigin(origin: HTMLElement, label: string) {
-  if (document.contains(origin)) {
-    return origin;
-  }
-  const wanted = evidenceLinkTitle(label);
+type DiffViewMode = "split" | "unified";
+
+const DiffViewContext = createContext<{
+  mode: DiffViewMode;
+  setMode: (mode: DiffViewMode) => void;
+}>({ mode: "unified", setMode: () => {} });
+
+// One diff view preference for the whole page: unified unless the reader has
+// chosen split, and switching anywhere applies to every diff at once.
+function DiffViewProvider({ children }: { children: ReactNode }) {
+  const [mode, setModeState] = useState<DiffViewMode>("unified");
+  useEffect(() => {
+    const stored = window.localStorage.getItem(DIFF_VIEW_MODE_STORAGE_KEY);
+    if (stored === "split" || stored === "unified") {
+      setModeState(stored);
+    }
+    function syncMode(event: StorageEvent) {
+      if (
+        event.key === DIFF_VIEW_MODE_STORAGE_KEY &&
+        (event.newValue === "split" || event.newValue === "unified")
+      ) {
+        setModeState(event.newValue);
+      }
+    }
+    window.addEventListener("storage", syncMode);
+    return () => window.removeEventListener("storage", syncMode);
+  }, []);
+  const setMode = useCallback((next: DiffViewMode) => {
+    setModeState(next);
+    window.localStorage.setItem(DIFF_VIEW_MODE_STORAGE_KEY, next);
+  }, []);
+  const value = useMemo(() => ({ mode, setMode }), [mode, setMode]);
   return (
-    Array.from(document.querySelectorAll<HTMLElement>("button[title]")).find(
-      (button) => button.title === wanted,
-    ) ?? null
+    <DiffViewContext.Provider value={value}>
+      {children}
+    </DiffViewContext.Provider>
   );
+}
+
+function revealEvidence(blockId: string, targetId?: string) {
+  activateBlockTab(blockId);
+  // The card body mounts on expansion, so the scroll target may not exist
+  // until after a render pass.
+  window.setTimeout(() => {
+    const wanted =
+      targetId && document.getElementById(targetId) ? targetId : blockId;
+    scrollToElement(wanted, targetId ? "center" : "start");
+  }, 50);
+}
+
+// Finding links and thread anchors push a #block hash, so the browser back
+// button retraces every jump and restores the reader's scroll position.
+function useHashNavigation(blocks: ReviewBlock[]) {
+  useEffect(() => {
+    function resolveHash() {
+      const id = decodeURIComponent(window.location.hash.slice(1));
+      if (!id) {
+        return;
+      }
+      const block = blocks.find(
+        (candidate) => id === candidate.id || id.startsWith(`${candidate.id}-`),
+      );
+      if (!block) {
+        return;
+      }
+      revealEvidence(block.id, id === block.id ? undefined : id);
+    }
+    window.addEventListener("popstate", resolveHash);
+    if (window.location.hash) {
+      resolveHash();
+    }
+    return () => window.removeEventListener("popstate", resolveHash);
+  }, [blocks]);
 }
 
 export function BlocksList({
@@ -650,229 +713,344 @@ export function BlocksList({
   onAnchor: (anchor: ReviewAnchor) => void;
   onAnswer: (anchor: ReviewAnchor, answer: string) => void;
 }) {
-  const [returnTo, setReturnTo] = useState<{
-    label: string;
-    origin: HTMLElement;
-  } | null>(null);
   const targets = useMemo(() => buildEvidenceTargets(blocks), [blocks]);
-  const onJump = useCallback(
-    (label: string, blockId: string, origin: HTMLElement) => {
-      setReturnTo({ label, origin });
-      activateBlockTab(blockId);
-      window.setTimeout(() => scrollToElement(blockId), 0);
-    },
-    [],
-  );
+  const onJump = useCallback((blockId: string) => {
+    window.history.pushState(null, "", `#${encodeURIComponent(blockId)}`);
+    revealEvidence(blockId);
+  }, []);
   const evidenceLinks = useMemo(() => ({ targets, onJump }), [targets, onJump]);
+  useHashNavigation(blocks);
 
   const items: ReactNode[] = [];
   let index = 0;
   while (index < blocks.length) {
     const block = blocks[index];
+    if (!block) {
+      index += 1;
+      continue;
+    }
     const next = blocks[index + 1];
-    if (isKeyChangesSection(block) && next && isTabbedKeyChangeBlock(next)) {
-      const tabBlocks: Array<
-        Extract<ReviewBlock, { type: "diff" | "annotated-code" }>
-      > = [];
-      let tabIndex = index + 1;
-      while (
-        tabIndex < blocks.length &&
-        isTabbedKeyChangeBlock(blocks[tabIndex])
-      ) {
-        tabBlocks.push(
-          blocks[tabIndex] as Extract<
-            ReviewBlock,
-            { type: "diff" | "annotated-code" }
-          >,
-        );
-        tabIndex += 1;
+    if (
+      isEvidenceBlock(block) ||
+      (block.type === "section" && next && isEvidenceBlock(next))
+    ) {
+      const heading = block.type === "section" ? block : null;
+      const run: EvidenceBlockData[] = [];
+      let cursor = heading ? index + 1 : index;
+      while (cursor < blocks.length) {
+        const candidate = blocks[cursor];
+        if (!isEvidenceBlock(candidate)) {
+          break;
+        }
+        run.push(candidate);
+        cursor += 1;
       }
       items.push(
-        <CommentableBlock
-          key={block.id}
-          block={block}
-          compactWithPrevious={false}
-          threads={threadsByBlock.get(block.id) ?? []}
-          onAnchor={onAnchor}
-          onAnswer={onAnswer}
-        />,
-      );
-      items.push(
-        <KeyChangesTabs
-          key={`${block.id}:tabs`}
-          blocks={tabBlocks}
+        <EvidenceGroup
+          key={heading?.id ?? run[0]?.id ?? `evidence-${index}`}
+          heading={heading}
+          blocks={run}
           threadsByBlock={threadsByBlock}
           onAnchor={onAnchor}
-          onAnswer={onAnswer}
         />,
       );
-      index = tabIndex;
+      index = cursor;
       continue;
     }
 
-    if (block) {
-      items.push(
-        <CommentableBlock
-          key={block.id}
-          block={block}
-          compactWithPrevious={
-            block.type === "api-endpoint" &&
-            blocks[index - 1]?.type === "api-endpoint"
-          }
-          threads={threadsByBlock.get(block.id) ?? []}
-          onAnchor={onAnchor}
-          onAnswer={onAnswer}
-        />,
-      );
-    }
+    items.push(
+      <CommentableBlock
+        key={block.id}
+        block={block}
+        compactWithPrevious={
+          block.type === "api-endpoint" &&
+          blocks[index - 1]?.type === "api-endpoint"
+        }
+        threads={threadsByBlock.get(block.id) ?? []}
+        onAnchor={onAnchor}
+        onAnswer={onAnswer}
+      />,
+    );
     index += 1;
   }
 
   return (
-    <EvidenceLinkContext.Provider value={evidenceLinks}>
-      {items}
-      {returnTo ? (
-        <ReturnToProse
-          label={returnTo.label}
-          onReturn={() => {
-            const origin = resolveJumpOrigin(returnTo.origin, returnTo.label);
-            if (origin) {
-              origin.scrollIntoView({ block: "center", behavior: "smooth" });
-              flashDomElement(origin);
-            }
-            setReturnTo(null);
-          }}
-        />
-      ) : null}
-    </EvidenceLinkContext.Provider>
+    <DiffViewProvider>
+      <EvidenceLinkContext.Provider value={evidenceLinks}>
+        {items}
+      </EvidenceLinkContext.Provider>
+    </DiffViewProvider>
   );
 }
 
-function ReturnToProse({
-  label,
-  onReturn,
-}: {
-  label: string;
-  onReturn: () => void;
-}) {
-  return (
-    <div className="pointer-events-none sticky bottom-6 z-30 flex justify-center">
-      <Button
-        className="pointer-events-auto shadow-lg"
-        size="sm"
-        variant="secondary"
-        onClick={onReturn}
-      >
-        <ArrowLeft className="h-4 w-4" />
-        Back to the finding about <span className="font-mono">{label}</span>
-      </Button>
-    </div>
-  );
-}
+type EvidenceBlockData = Extract<
+  ReviewBlock,
+  { type: "diff" | "annotated-code" }
+>;
 
-function isKeyChangesSection(block: ReviewBlock | undefined) {
-  return (
-    (block?.type === "section" &&
-      block.data.title.trim().toLowerCase() === "key changes") ||
-    (block?.type === "rich-text" &&
-      block.data.markdown.trim().toLowerCase() === "## key changes")
-  );
-}
-
-function isTabbedKeyChangeBlock(
+function isEvidenceBlock(
   block: ReviewBlock | undefined,
-): block is Extract<ReviewBlock, { type: "diff" | "annotated-code" }> {
+): block is EvidenceBlockData {
   return block?.type === "diff" || block?.type === "annotated-code";
 }
 
-function KeyChangesTabs({
+function EvidenceGroup({
+  heading,
   blocks,
   threadsByBlock,
   onAnchor,
-  onAnswer,
 }: {
-  blocks: Array<Extract<ReviewBlock, { type: "diff" | "annotated-code" }>>;
+  heading: Extract<ReviewBlock, { type: "section" }> | null;
+  blocks: EvidenceBlockData[];
   threadsByBlock: Map<string, Thread[]>;
   onAnchor: (anchor: ReviewAnchor) => void;
-  onAnswer: (anchor: ReviewAnchor, answer: string) => void;
 }) {
-  const [activeId, setActiveId] = useState(blocks[0]?.id ?? "");
-  const activeBlock =
-    blocks.find((block) => block.id === activeId) ?? blocks[0];
-
+  // A lone evidence card is the proof itself, so it starts open; a set starts
+  // collapsed and reads as an index of claims.
+  const [openIds, setOpenIds] = useState<Set<string>>(() => {
+    const first = blocks[0];
+    return new Set(blocks.length === 1 && first ? [first.id] : []);
+  });
   useEffect(() => {
-    function activateBlock(event: Event) {
+    function activate(event: Event) {
       const blockId = (event as CustomEvent<{ blockId?: string }>).detail
         ?.blockId;
       if (blockId && blocks.some((block) => block.id === blockId)) {
-        setActiveId(blockId);
+        setOpenIds((current) =>
+          current.has(blockId) ? current : new Set([...current, blockId]),
+        );
       }
     }
-    window.addEventListener("sieve:activate-block", activateBlock);
-    return () =>
-      window.removeEventListener("sieve:activate-block", activateBlock);
+    window.addEventListener("sieve:activate-block", activate);
+    return () => window.removeEventListener("sieve:activate-block", activate);
   }, [blocks]);
-
-  if (!activeBlock) {
-    return null;
-  }
+  const allOpen = blocks.every((block) => openIds.has(block.id));
 
   return (
-    <div className="space-y-3">
-      <div className="flex overflow-x-auto border-b">
-        {blocks.map((block) => {
-          const active = block.id === activeBlock.id;
-          const stats = keyChangeStats(block);
-          const threadCount = threadsByBlock.get(block.id)?.length ?? 0;
-          return (
-            <button
-              key={block.id}
-              className={`flex min-w-0 shrink-0 items-center gap-2 border-b-2 px-3 py-2 text-sm transition-colors ${
-                active
-                  ? "border-primary text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              }`}
-              type="button"
-              onClick={() => setActiveId(block.id)}
+    <section className="space-y-3">
+      {heading || blocks.length > 1 ? (
+        <div className="flex items-center justify-between gap-3">
+          {heading ? (
+            <h2
+              className="text-xl font-semibold"
+              data-block-id={heading.id}
+              data-text-anchorable="true"
+              id={heading.id}
             >
-              <span className="max-w-56 truncate font-mono">
-                {keyChangeLabel(block)}
-              </span>
-              {stats ? (
-                <span className="font-mono text-xs">
-                  <span className="text-emerald-700">+{stats.additions}</span>{" "}
-                  <span className="text-red-700">-{stats.deletions}</span>
-                </span>
-              ) : null}
-              {threadCount > 0 ? (
-                <Badge tone="amber">
-                  <MessageSquare className="h-3 w-3" />
-                  {threadCount}
-                </Badge>
-              ) : null}
-            </button>
-          );
-        })}
-      </div>
-      <CommentableBlock
-        block={activeBlock}
-        compactWithPrevious={false}
-        threads={threadsByBlock.get(activeBlock.id) ?? []}
-        onAnchor={onAnchor}
-        onAnswer={onAnswer}
-      />
-    </div>
+              {heading.data.title}
+            </h2>
+          ) : (
+            <span />
+          )}
+          {blocks.length > 1 ? (
+            <Button
+              className="shrink-0"
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                setOpenIds(
+                  allOpen
+                    ? new Set()
+                    : new Set(blocks.map((block) => block.id)),
+                )
+              }
+            >
+              {allOpen ? (
+                <ChevronsDownUp className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronsUpDown className="h-3.5 w-3.5" />
+              )}
+              {allOpen ? "Collapse all" : "Expand all"}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      {blocks.map((block) => (
+        <EvidenceCard
+          key={block.id}
+          block={block}
+          open={openIds.has(block.id)}
+          threads={threadsByBlock.get(block.id) ?? []}
+          onAnchor={onAnchor}
+          onToggle={() =>
+            setOpenIds((current) => {
+              const nextIds = new Set(current);
+              if (nextIds.has(block.id)) {
+                nextIds.delete(block.id);
+              } else {
+                nextIds.add(block.id);
+              }
+              return nextIds;
+            })
+          }
+        />
+      ))}
+    </section>
   );
 }
 
-function keyChangeLabel(
-  block: Extract<ReviewBlock, { type: "diff" | "annotated-code" }>,
-) {
-  const filename = block.data.filename;
-  const parts = filename.split("/");
-  const basename = parts.at(-1) ?? filename;
-  const parent = parts.at(-2);
-  return parent ? `${parent}/${basename}` : basename;
+// A "Diff: path" placeholder would just echo the filename line below it.
+function isPlaceholderSummary(summary: string) {
+  return /^(Diff|New file): /.test(summary);
+}
+
+function evidenceFindingLabels(block: EvidenceBlockData) {
+  const labels = block.data.annotations
+    .map((annotation) => annotation.label)
+    .filter((label): label is string => Boolean(label));
+  return [...new Set(labels)].slice(0, 3);
+}
+
+function EvidenceCard({
+  block,
+  open,
+  threads,
+  onAnchor,
+  onToggle,
+}: {
+  block: EvidenceBlockData;
+  open: boolean;
+  threads: Thread[];
+  onAnchor: (anchor: ReviewAnchor) => void;
+  onToggle: () => void;
+}) {
+  const view = useContext(DiffViewContext);
+  const stats = keyChangeStats(block);
+  const lineCount =
+    block.type === "annotated-code" ? block.data.code.split("\n").length : null;
+  const findings = evidenceFindingLabels(block);
+  const isOneSided =
+    block.type === "diff" &&
+    (block.data.before.trim().length === 0 ||
+      block.data.after.trim().length === 0);
+  const claim =
+    block.summary && !isPlaceholderSummary(block.summary)
+      ? block.summary
+      : null;
+
+  return (
+    <article
+      id={block.id}
+      className="group scroll-mt-16 overflow-clip rounded-lg border bg-card"
+    >
+      <div
+        className={`sticky top-12 z-[5] flex items-center gap-3 rounded-t-lg bg-muted px-3 py-2 ${
+          open ? "border-b" : ""
+        }`}
+        data-diff-header
+      >
+        <button
+          aria-expanded={open}
+          className="group/toggle -m-1 flex min-w-0 flex-1 cursor-pointer items-start gap-2 rounded-md p-1 text-left transition-colors hover:bg-foreground/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          title={open ? "Collapse evidence" : "Expand evidence"}
+          type="button"
+          onClick={onToggle}
+        >
+          <ChevronDown
+            className={`mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-all group-hover/toggle:translate-y-0.5 group-hover/toggle:text-foreground ${
+              open
+                ? ""
+                : "-rotate-90 group-hover/toggle:translate-y-0 group-hover/toggle:translate-x-0.5"
+            }`}
+          />
+          <span className="min-w-0">
+            {claim ? (
+              <span
+                className={`block text-sm font-medium leading-5 ${
+                  open ? "" : "line-clamp-2"
+                }`}
+                data-block-id={block.id}
+                data-text-anchorable="true"
+              >
+                {claim}
+              </span>
+            ) : null}
+            <span
+              className={`flex items-center gap-2 font-mono text-xs text-muted-foreground ${
+                claim ? "mt-1" : ""
+              }`}
+            >
+              {block.type === "diff" ? (
+                <FileCode2 className="h-3.5 w-3.5 shrink-0" />
+              ) : (
+                <Code2 className="h-3.5 w-3.5 shrink-0" />
+              )}
+              <span className="truncate">{block.data.filename}</span>
+              {findings.map((label) => (
+                <span
+                  key={label}
+                  className="shrink-0 rounded-full bg-violet-100 px-1.5 py-0.5 font-sans text-[10px] font-semibold text-violet-800"
+                >
+                  {label}
+                </span>
+              ))}
+            </span>
+          </span>
+        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          {threads.length > 0 ? (
+            <button
+              className="inline-flex cursor-pointer items-center gap-1 rounded-full border bg-card px-2 py-0.5 text-xs font-medium text-amber-700 transition-colors hover:bg-amber-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              title={`${threads.length} anchored thread${threads.length === 1 ? "" : "s"}`}
+              type="button"
+              onClick={() => scrollToThread(threads[0]?.root.id)}
+            >
+              <MessageSquare className="h-3 w-3" />
+              {threads.length}
+            </button>
+          ) : null}
+          {stats ? (
+            <span className="font-mono text-xs">
+              <span className="text-emerald-700">+{stats.additions}</span>{" "}
+              <span className="text-red-700">-{stats.deletions}</span>
+            </span>
+          ) : lineCount !== null ? (
+            <span className="font-mono text-xs text-muted-foreground">
+              {lineCount} lines
+            </span>
+          ) : null}
+          {open && block.type === "diff" && !isOneSided ? (
+            <div className="hidden rounded-md border bg-card p-0.5 sm:flex">
+              {(["split", "unified"] as const).map((item) => (
+                <button
+                  key={item}
+                  className={`cursor-pointer rounded px-2 py-1 text-xs transition-colors ${
+                    view.mode === item
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:bg-accent"
+                  }`}
+                  type="button"
+                  onClick={() => view.setMode(item)}
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <button
+            aria-label="Comment on block"
+            className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-full border bg-card text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100"
+            title="Comment on block"
+            type="button"
+            onClick={() => onAnchor({ blockId: block.id, kind: "block" })}
+          >
+            <MessageSquare className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
+      {open ? (
+        block.type === "diff" ? (
+          <DiffBlockBody block={block} threads={threads} onAnchor={onAnchor} />
+        ) : (
+          <AnnotatedCodeBody
+            block={block}
+            threads={threads}
+            onAnchor={onAnchor}
+          />
+        )
+      ) : null}
+    </article>
+  );
 }
 
 function keyChangeStats(
@@ -917,7 +1095,7 @@ function CommentableBlock({
     >
       {block.summary && block.type !== "image-diff" ? (
         <p
-          className="mb-3 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground"
+          className="mb-2 text-sm font-medium leading-6"
           data-block-id={block.id}
           data-text-anchorable="true"
         >
@@ -1000,15 +1178,23 @@ function BlockRenderer({
       return <CalloutBlock block={block} />;
     case "file-tree":
       return <FileTreeBlock block={block} onAnchor={onAnchor} />;
+    // Evidence blocks normally render as cards via EvidenceGroup; these
+    // cases only cover a stray block outside any evidence run.
     case "diff":
-      return <DiffBlock block={block} threads={threads} onAnchor={onAnchor} />;
+      return (
+        <div className="overflow-clip rounded-lg border bg-card">
+          <DiffBlockBody block={block} threads={threads} onAnchor={onAnchor} />
+        </div>
+      );
     case "annotated-code":
       return (
-        <AnnotatedCodeBlock
-          block={block}
-          threads={threads}
-          onAnchor={onAnchor}
-        />
+        <div className="overflow-clip rounded-lg border bg-card">
+          <AnnotatedCodeBody
+            block={block}
+            threads={threads}
+            onAnchor={onAnchor}
+          />
+        </div>
       );
     case "data-model":
       return (
@@ -1465,11 +1651,45 @@ function FileTreeRow({
   onAnchor: (anchor: ReviewAnchor) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const row = (
+    <>
+      <ChangeBadge change={entry.change} />
+      <span className="min-w-0">
+        <PathLabel path={entry.path} />
+        {entry.note ? (
+          <span className="block truncate text-xs text-muted-foreground">
+            {entry.note}
+          </span>
+        ) : null}
+      </span>
+      <span className="text-right font-mono text-xs">
+        <span className="text-emerald-700">+{entry.additions ?? 0}</span>{" "}
+        <span className="text-red-700">-{entry.deletions ?? 0}</span>
+      </span>
+    </>
+  );
   return (
-    <div className="border-b last:border-b-0">
+    <div className="group/file border-b last:border-b-0">
       <div className="flex items-stretch">
+        {entry.patch ? (
+          <button
+            aria-expanded={expanded}
+            className="grid min-w-0 flex-1 cursor-pointer grid-cols-[36px_minmax(0,1fr)_110px] items-center gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            title={expanded ? "Hide the full patch" : "Show the full patch"}
+            type="button"
+            onClick={() => setExpanded((current) => !current)}
+          >
+            {row}
+          </button>
+        ) : (
+          <div className="grid min-w-0 flex-1 grid-cols-[36px_minmax(0,1fr)_110px] items-center gap-3 px-3 py-2 text-sm">
+            {row}
+          </div>
+        )}
         <button
-          className="grid min-w-0 flex-1 grid-cols-[36px_minmax(0,1fr)_110px] items-center gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          aria-label={`Comment on ${entry.path}`}
+          className="shrink-0 cursor-pointer px-2 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover/file:opacity-100"
+          title={`Comment on ${entry.path}`}
           type="button"
           onClick={() =>
             onAnchor({
@@ -1479,23 +1699,11 @@ function FileTreeRow({
             })
           }
         >
-          <ChangeBadge change={entry.change} />
-          <span className="min-w-0">
-            <PathLabel path={entry.path} />
-            {entry.note ? (
-              <span className="block truncate text-xs text-muted-foreground">
-                {entry.note}
-              </span>
-            ) : null}
-          </span>
-          <span className="text-right font-mono text-xs">
-            <span className="text-emerald-700">+{entry.additions ?? 0}</span>{" "}
-            <span className="text-red-700">-{entry.deletions ?? 0}</span>
-          </span>
+          <MessageSquare className="h-3.5 w-3.5" />
         </button>
         {entry.patch ? (
           <button
-            className="flex shrink-0 items-center gap-1 px-3 text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex shrink-0 cursor-pointer items-center gap-1 px-3 text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             type="button"
             aria-expanded={expanded}
             onClick={() => setExpanded((current) => !current)}
@@ -1743,6 +1951,7 @@ function ImageDiffBlock({
 }: {
   block: Extract<ReviewBlock, { type: "image-diff" }>;
 }) {
+  const [open, setOpen] = useState(true);
   const [expanded, setExpanded] = useState<{
     label: string;
     attachmentId: string;
@@ -1755,39 +1964,26 @@ function ImageDiffBlock({
     tone: "neutral" | "diff";
   }> = [];
   if (block.data.before) {
-    images.push({
-      label: "merge-base",
-      ref: block.data.before,
-      tone: "neutral",
-    });
+    images.push({ label: "before", ref: block.data.before, tone: "neutral" });
   }
   if (block.data.after) {
-    images.push({
-      label: "this branch",
-      ref: block.data.after,
-      tone: "neutral",
-    });
+    images.push({ label: "after", ref: block.data.after, tone: "neutral" });
   }
   if (block.data.diff) {
     images.push({ label: "diff", ref: block.data.diff, tone: "diff" });
   }
-  const comparisonImages = images.filter((image) => image.tone === "neutral");
-  const differenceImage = images.find((image) => image.tone === "diff");
 
-  function renderFigure(
-    image: (typeof images)[number],
-    emphasis: "comparison" | "difference",
-  ) {
+  function renderFigure(image: (typeof images)[number]) {
     return (
       <figure
         key={image.label}
         className={`min-w-0 overflow-hidden rounded-md border bg-card ${
-          emphasis === "difference" ? "border-amber-300 bg-amber-50/30" : ""
+          image.tone === "diff" ? "border-amber-300 bg-amber-50/30" : ""
         }`}
         data-visual-panel={image.label}
       >
         <button
-          className="block w-full bg-muted/40 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="block w-full cursor-zoom-in bg-muted/40 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           type="button"
           onClick={() =>
             setExpanded({
@@ -1800,9 +1996,7 @@ function ImageDiffBlock({
         >
           <Image
             alt={`${block.data.name} ${image.label}`}
-            className={`h-auto w-full object-contain ${
-              emphasis === "difference" ? "max-h-[720px]" : "max-h-[640px]"
-            }`}
+            className="h-auto max-h-[640px] w-full object-contain"
             height={image.ref.height}
             loading="lazy"
             unoptimized
@@ -1811,7 +2005,7 @@ function ImageDiffBlock({
           />
         </button>
         <figcaption
-          className={`border-t px-3 py-2 text-sm font-medium ${
+          className={`border-t px-3 py-1.5 text-center text-sm font-medium ${
             image.tone === "diff" ? "text-amber-800" : "text-muted-foreground"
           }`}
         >
@@ -1823,45 +2017,59 @@ function ImageDiffBlock({
 
   return (
     <section
-      className="-mx-3 space-y-5 border-y bg-card px-3 py-5 sm:-mx-4 sm:px-4"
+      className="overflow-clip rounded-lg border bg-card"
       data-visual-comparison
     >
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 items-start gap-3">
-          <span className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-foreground text-background">
-            <ImageIcon className="h-4 w-4" />
+      <button
+        aria-expanded={open}
+        className={`group/visual flex w-full cursor-pointer items-center gap-3 bg-muted px-3 py-2 text-left transition-colors hover:bg-foreground/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+          open ? "border-b" : ""
+        }`}
+        title={open ? "Collapse the comparison" : "Expand the comparison"}
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+      >
+        <ChevronDown
+          className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover/visual:text-foreground ${
+            open ? "" : "-rotate-90"
+          }`}
+        />
+        <ImageIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1">
+          {block.summary ? (
+            <span className="block text-sm font-medium leading-5">
+              {block.summary}
+            </span>
+          ) : null}
+          <span
+            className={`block truncate text-xs text-muted-foreground ${
+              block.summary ? "mt-0.5" : "text-sm font-medium text-foreground"
+            }`}
+            title={
+              block.data.baseline
+                ? `${block.data.baseline.ref} - ${block.data.baseline.platform}`
+                : undefined
+            }
+          >
+            {block.data.name}
           </span>
-          <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase text-muted-foreground">
-              Visual comparison
-            </p>
-            <h3
-              className="truncate text-xl font-semibold"
-              title={
-                block.data.baseline
-                  ? `${block.data.baseline.ref} - ${block.data.baseline.platform}`
-                  : undefined
-              }
-            >
-              {block.data.name}
-            </h3>
-          </div>
-        </div>
+        </span>
         <Badge tone={imageDiffStatusTone(block.data.status)}>
           {block.data.status}
         </Badge>
-      </div>
-      <div
-        className={`grid gap-4 ${
-          comparisonImages.length > 1 ? "md:grid-cols-2" : ""
-        }`}
-        data-visual-primary
-      >
-        {comparisonImages.map((image) => renderFigure(image, "comparison"))}
-      </div>
-      {differenceImage ? (
-        <div data-visual-difference>
-          {renderFigure(differenceImage, "difference")}
+      </button>
+      {open ? (
+        <div
+          className={`grid gap-3 p-3 ${
+            images.length === 3
+              ? "sm:grid-cols-3"
+              : images.length === 2
+                ? "sm:grid-cols-2"
+                : ""
+          }`}
+          data-visual-primary
+        >
+          {images.map((image) => renderFigure(image))}
         </div>
       ) : null}
       {expanded ? (
@@ -1966,7 +2174,7 @@ function useContainerWidth(ref: RefObject<HTMLElement | null>) {
   return width;
 }
 
-function DiffBlock({
+function DiffBlockBody({
   block,
   threads,
   onAnchor,
@@ -1977,7 +2185,7 @@ function DiffBlock({
 }) {
   const codeSurfaceRef = useRef<HTMLDivElement | null>(null);
   const codeSurfaceWidth = useContainerWidth(codeSurfaceRef);
-  const [mode, setMode] = useState<"split" | "unified">(block.data.mode);
+  const { mode } = useContext(DiffViewContext);
   const language = inferLanguageFromFilename(
     block.data.filename,
     block.data.language,
@@ -2005,22 +2213,6 @@ function DiffBlock({
     () => highlightCodeLines(block.data.after, language),
     [block.data.after, language],
   );
-  useEffect(() => {
-    const stored = window.localStorage.getItem(DIFF_VIEW_MODE_STORAGE_KEY);
-    if (stored === "split" || stored === "unified") {
-      setMode(stored);
-    }
-    function syncMode(event: StorageEvent) {
-      if (
-        event.key === DIFF_VIEW_MODE_STORAGE_KEY &&
-        (event.newValue === "split" || event.newValue === "unified")
-      ) {
-        setMode(event.newValue);
-      }
-    }
-    window.addEventListener("storage", syncMode);
-    return () => window.removeEventListener("storage", syncMode);
-  }, []);
   const isOneSided =
     block.data.before.trim().length === 0 ||
     block.data.after.trim().length === 0;
@@ -2030,12 +2222,6 @@ function DiffBlock({
       ? "unified"
       : mode;
   const unified = effectiveMode === "unified";
-  const additions = rows.filter(
-    (row) => row.afterLine && row.kind !== "context",
-  ).length;
-  const deletions = rows.filter(
-    (row) => row.beforeLine && row.kind !== "context",
-  ).length;
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
     () => new Set(),
   );
@@ -2059,57 +2245,7 @@ function DiffBlock({
     });
   }
   return (
-    <div
-      ref={codeSurfaceRef}
-      className="min-w-0 overflow-clip rounded-lg border bg-card"
-      data-diff-code
-    >
-      <div
-        className="sticky top-12 z-[5] flex items-center justify-between gap-3 rounded-t-lg border-b bg-muted px-3 py-2"
-        data-diff-header
-      >
-        <div className="flex min-w-0 items-center gap-2">
-          <FileCode2 className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <span className="truncate font-mono text-sm font-medium">
-            {block.data.filename}
-          </span>
-          {block.data.language ? (
-            <Badge className="font-mono" tone="neutral">
-              {block.data.language}
-            </Badge>
-          ) : null}
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-xs">
-            <span className="text-emerald-700">+{additions}</span>{" "}
-            <span className="text-red-700">-{deletions}</span>
-          </span>
-          {!isOneSided ? (
-            <div className="hidden rounded-md border bg-card p-0.5 sm:flex">
-              {(["split", "unified"] as const).map((item) => (
-                <button
-                  key={item}
-                  className={`rounded px-2 py-1 text-xs transition-colors ${
-                    effectiveMode === item
-                      ? "bg-primary text-primary-foreground"
-                      : "text-muted-foreground hover:bg-accent"
-                  }`}
-                  type="button"
-                  onClick={() => {
-                    setMode(item);
-                    window.localStorage.setItem(
-                      DIFF_VIEW_MODE_STORAGE_KEY,
-                      item,
-                    );
-                  }}
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      </div>
+    <div ref={codeSurfaceRef} className="min-w-0" data-diff-code>
       <div className="overflow-x-auto font-mono text-[0.75rem] leading-5">
         {displayRows.map((item) =>
           item.type === "collapse" ? (
@@ -2385,7 +2521,7 @@ function UnifiedDiffLine({
   );
 }
 
-function AnnotatedCodeBlock({
+function AnnotatedCodeBody({
   block,
   threads,
   onAnchor,
@@ -2419,26 +2555,7 @@ function AnnotatedCodeBlock({
   );
   const visibleLines = expanded ? lines : lines.slice(0, previewCount);
   return (
-    <div className="overflow-clip rounded-lg border bg-card">
-      <div
-        className="sticky top-12 z-[5] flex items-center justify-between gap-3 rounded-t-lg border-b bg-muted px-3 py-2"
-        data-diff-header
-      >
-        <div className="flex min-w-0 items-center gap-2">
-          <Code2 className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <span className="truncate font-mono text-sm font-medium">
-            {block.data.filename}
-          </span>
-          {block.data.language ? (
-            <Badge className="font-mono" tone="neutral">
-              {block.data.language}
-            </Badge>
-          ) : null}
-        </div>
-        <span className="font-mono text-xs text-muted-foreground">
-          {lines.length} lines
-        </span>
-      </div>
+    <div className="min-w-0">
       <div className="overflow-x-auto font-mono text-[0.75rem] leading-5">
         {visibleLines.map((line, index) => {
           const lineNumber = startLine + index;
@@ -3569,6 +3686,14 @@ function ThreadCard({
             return;
           }
           event.preventDefault();
+          // Push the jump into history so the back button returns here.
+          if (targetId) {
+            window.history.pushState(
+              null,
+              "",
+              `#${encodeURIComponent(targetId)}`,
+            );
+          }
           scrollToAnchor(thread.root.anchor);
         }}
       >
@@ -3703,6 +3828,8 @@ function scrollToThread(threadId?: string) {
 
 function scrollToAnchor(anchor: ReviewAnchor) {
   activateBlockTab(anchor.blockId);
+  // The owning evidence card may need a render pass to expand before the
+  // anchored element exists.
   window.setTimeout(() => {
     const target = findTextAnchorTarget(anchor);
     if (target) {
@@ -3710,8 +3837,11 @@ function scrollToAnchor(anchor: ReviewAnchor) {
       flashDomElement(target);
       return;
     }
-    scrollToElement(anchorTargetId(anchor));
-  }, 0);
+    scrollToElement(
+      anchorTargetId(anchor),
+      anchor.kind === "line" ? "center" : "start",
+    );
+  }, 50);
 }
 
 function flashAnchor(anchor: ReviewAnchor | null) {

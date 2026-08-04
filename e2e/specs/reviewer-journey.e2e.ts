@@ -19,9 +19,11 @@ test("seeded reviewer journey composes read-only interactions", async ({
   await expect(
     page.getByText(/QR\/property coverage, adds Playwright harness checks/),
   ).toBeVisible();
-  await expect(page.getByText("Visual comparison")).toBeVisible();
-  await expect(page.locator('[data-visual-panel="merge-base"]')).toBeVisible();
-  await expect(page.locator('[data-visual-panel="this branch"]')).toBeVisible();
+  await expect(
+    page.getByText("credential-acceptance", { exact: true }),
+  ).toBeVisible();
+  await expect(page.locator('[data-visual-panel="before"]')).toBeVisible();
+  await expect(page.locator('[data-visual-panel="after"]')).toBeVisible();
   await expect(page.locator('[data-visual-panel="diff"]')).toBeVisible();
 
   const endpoint = page.getByRole("button", {
@@ -32,10 +34,11 @@ test("seeded reviewer journey composes read-only interactions", async ({
   await endpoint.click();
   await expect(page.getByText("roundTrip")).toBeVisible();
 
-  await page.getByRole("button", { name: "Unified" }).click();
-  expect(
-    await page.evaluate(() => localStorage.getItem("sieve:diff-view-mode")),
-  ).toBe("unified");
+  // Evidence cards start collapsed; expanding reveals the unified default.
+  await page.getByRole("button", { name: "Expand all" }).click();
+  await expect(
+    page.getByRole("button", { exact: true, name: "unified" }),
+  ).toHaveClass(/bg-primary/);
 
   // Authored annotations read inline beside their lines without hovering.
   await expect(
@@ -46,7 +49,7 @@ test("seeded reviewer journey composes read-only interactions", async ({
   ).toContainText("state coupling");
 
   const thumbnail = page.getByRole("img", {
-    name: /credential-acceptance .*this branch/i,
+    name: /credential-acceptance after/i,
   });
   await thumbnail.scrollIntoViewIfNeeded();
   await expectHittable(thumbnail);
@@ -76,13 +79,9 @@ test("seeded reviewer journey composes read-only interactions", async ({
     0,
   );
 
-  expect(
-    await page.evaluate(() => localStorage.getItem("sieve:diff-view-mode")),
-  ).toBe("unified");
-
   await page
     .getByRole("button", {
-      name: /src\/credential\/domain\/qrPayloads\.property\.test\.ts/,
+      name: "Comment on src/credential/domain/qrPayloads.property.test.ts",
     })
     .click();
   await expect(page.getByTitle("Clear anchor")).toContainText(

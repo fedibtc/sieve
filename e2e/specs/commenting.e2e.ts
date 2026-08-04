@@ -20,7 +20,9 @@ test("block, file, text quote, routing, and persistence work through the real UI
   await expect(page.getByText("Please update this block")).toBeVisible();
   await expect(page.getByRole("button", { name: /Needs agent/ })).toBeVisible();
 
-  await page.getByRole("button", { name: /src\/b\.ts/ }).click();
+  const fileRow = page.getByText("src/b.ts").locator("..").locator("..");
+  await fileRow.hover();
+  await page.getByRole("button", { name: "Comment on src/b.ts" }).click();
   await page.getByLabel("Comment text").fill("File-level note");
   await page
     .getByRole("button", { exact: true, name: "FYI for humans" })
