@@ -8,10 +8,13 @@ const annotationSchema = z.object({
   note: z.string().min(1),
 });
 
+export const severitySchema = z.enum(["blocking", "minor", "fyi"]);
+
 const richTextBlockSchema = z.object({
   id: z.string().min(1),
   type: z.literal("rich-text"),
   summary: z.string().optional(),
+  severity: severitySchema.optional(),
   data: z.object({
     markdown: z.string().min(1),
   }),
@@ -33,6 +36,9 @@ const calloutBlockSchema = z.object({
   data: z.object({
     tone: z.enum(["info", "decision", "risk", "warning", "success"]),
     markdown: z.string().min(1),
+    recommendation: z
+      .enum(["merge", "merge-with-nits", "needs-changes", "cannot-judge-alone"])
+      .optional(),
   }),
 });
 
@@ -65,6 +71,7 @@ const diffBlockSchema = z.object({
   id: z.string().min(1),
   type: z.literal("diff"),
   summary: z.string().optional(),
+  severity: severitySchema.optional(),
   data: z.object({
     filename: z.string().min(1),
     language: z.string().optional(),
@@ -81,6 +88,7 @@ const annotatedCodeBlockSchema = z.object({
   id: z.string().min(1),
   type: z.literal("annotated-code"),
   summary: z.string().optional(),
+  severity: severitySchema.optional(),
   data: z.object({
     filename: z.string().min(1),
     language: z.string().optional(),
@@ -196,6 +204,7 @@ const imageDiffBlockSchema = z
     id: z.string().min(1),
     type: z.literal("image-diff"),
     summary: z.string().optional(),
+    severity: severitySchema.optional(),
     data: z.object({
       name: z.string().min(1).max(120),
       status: z.enum(["changed", "added", "removed"]),
@@ -359,6 +368,10 @@ export const anchoredCommentInputSchema = z.object({
 
 export type ReviewDocument = z.infer<typeof reviewDocumentSchema>;
 export type ReviewBlock = z.infer<typeof blockSchema>;
+export type BlockSeverity = z.infer<typeof severitySchema>;
+export type ReviewRecommendation = NonNullable<
+  Extract<ReviewBlock, { type: "callout" }>["data"]["recommendation"]
+>;
 
 export function collectAttachmentIds(document: ReviewDocument) {
   const ids = new Set<string>();

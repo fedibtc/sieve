@@ -66,6 +66,49 @@ export const galleryEntries: GalleryEntry[] = [
     ),
   },
   {
+    slug: "verdict-and-severity",
+    title: "Verdict and severity",
+    description:
+      "A recommendation badge on the verdict, a minor finding that folds away, and an fyi appendix.",
+    blocks: [
+      {
+        id: "gallery-verdict-recommendation",
+        type: "callout",
+        summary: "Verdict with a recommendation badge",
+        data: {
+          tone: "decision",
+          markdown:
+            "**The parser change is correct and the two findings below are cosmetic.** Nothing blocks the merge.",
+          recommendation: "merge-with-nits",
+        },
+      },
+      {
+        id: "gallery-minor-diff",
+        type: "diff",
+        summary: "The fallback constant is dead: every caller passes a limit",
+        severity: "minor",
+        data: {
+          filename: "src/lib/duration/parse.ts",
+          language: "typescript",
+          before: "const DEFAULT_LIMIT = 100;\nconst limit = 100;",
+          after: "const DEFAULT_LIMIT = 100;\nconst limit = 250;",
+          mode: "unified",
+          annotations: [],
+        },
+      },
+      {
+        id: "gallery-fyi-appendix",
+        type: "rich-text",
+        summary: "How the limit coupling was checked",
+        severity: "fyi",
+        data: {
+          markdown:
+            "Every call site of `parseDuration` was traced: all four pass an explicit limit, so the constant change cannot alter parsed output anywhere.",
+        },
+      },
+    ],
+  },
+  {
     slug: "change-shape",
     title: "Change shape",
     description: "Churn bars showing where a change lands.",

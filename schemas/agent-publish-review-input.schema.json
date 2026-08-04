@@ -105,6 +105,14 @@
                   "summary": {
                     "type": "string"
                   },
+                  "severity": {
+                    "type": "string",
+                    "enum": [
+                      "blocking",
+                      "minor",
+                      "fyi"
+                    ]
+                  },
                   "data": {
                     "type": "object",
                     "properties": {
@@ -192,6 +200,15 @@
                       "markdown": {
                         "type": "string",
                         "minLength": 1
+                      },
+                      "recommendation": {
+                        "type": "string",
+                        "enum": [
+                          "merge",
+                          "merge-with-nits",
+                          "needs-changes",
+                          "cannot-judge-alone"
+                        ]
                       }
                     },
                     "required": [
@@ -312,6 +329,14 @@
                   "summary": {
                     "type": "string"
                   },
+                  "severity": {
+                    "type": "string",
+                    "enum": [
+                      "blocking",
+                      "minor",
+                      "fyi"
+                    ]
+                  },
                   "data": {
                     "type": "object",
                     "properties": {
@@ -411,6 +436,14 @@
                   },
                   "summary": {
                     "type": "string"
+                  },
+                  "severity": {
+                    "type": "string",
+                    "enum": [
+                      "blocking",
+                      "minor",
+                      "fyi"
+                    ]
                   },
                   "data": {
                     "type": "object",
@@ -859,6 +892,14 @@
                   },
                   "summary": {
                     "type": "string"
+                  },
+                  "severity": {
+                    "type": "string",
+                    "enum": [
+                      "blocking",
+                      "minor",
+                      "fyi"
+                    ]
                   },
                   "data": {
                     "type": "object",
