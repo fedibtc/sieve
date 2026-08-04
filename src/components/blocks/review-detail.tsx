@@ -44,7 +44,12 @@ import { RelativeTime } from "@/components/relative-time";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { emphasizeRanges, intralineRanges } from "@/lib/intraline";
 import type { ReviewAnchor } from "@/shared/anchors";
-import type { ReviewBlock, ReviewDocument } from "@/shared/blocks";
+import type {
+  BlockSeverity,
+  ReviewBlock,
+  ReviewDocument,
+  ReviewRecommendation,
+} from "@/shared/blocks";
 import { Button } from "../ui/button";
 
 const lowlight = createLowlight(common);
@@ -720,6 +725,14 @@ export function BlocksList({
   }, []);
   const evidenceLinks = useMemo(() => ({ targets, onJump }), [targets, onJump]);
   useHashNavigation(blocks);
+  const reviewMeta = useMemo(() => {
+    for (const block of blocks) {
+      if (block.type === "callout" && block.data.recommendation) {
+        return { recommendation: block.data.recommendation };
+      }
+    }
+    return { recommendation: null };
+  }, [blocks]);
 
   const items: ReactNode[] = [];
   let index = 0;
@@ -745,15 +758,34 @@ export function BlocksList({
         run.push(candidate);
         cursor += 1;
       }
-      items.push(
-        <EvidenceGroup
-          key={heading?.id ?? run[0]?.id ?? `evidence-${index}`}
-          heading={heading}
-          blocks={run}
-          threadsByBlock={threadsByBlock}
-          onAnchor={onAnchor}
-        />,
-      );
+      // Asides split out of the run into their own folded group so minor
+      // findings never sit at the same altitude as the load-bearing evidence.
+      const mainBlocks = run.filter((candidate) => !isAside(candidate));
+      const asideBlocks = run.filter((candidate) => isAside(candidate));
+      const groupKey = heading?.id ?? run[0]?.id ?? `evidence-${index}`;
+      if (mainBlocks.length > 0) {
+        items.push(
+          <EvidenceGroup
+            key={groupKey}
+            heading={heading}
+            blocks={mainBlocks}
+            threadsByBlock={threadsByBlock}
+            onAnchor={onAnchor}
+          />,
+        );
+      }
+      if (asideBlocks.length > 0) {
+        items.push(
+          <EvidenceGroup
+            key={`${groupKey}-aside`}
+            aside
+            heading={mainBlocks.length === 0 ? heading : null}
+            blocks={asideBlocks}
+            threadsByBlock={threadsByBlock}
+            onAnchor={onAnchor}
+          />,
+        );
+      }
       index = cursor;
       continue;
     }
@@ -776,9 +808,11 @@ export function BlocksList({
 
   return (
     <DiffViewProvider>
-      <EvidenceLinkContext.Provider value={evidenceLinks}>
-        {items}
-      </EvidenceLinkContext.Provider>
+      <ReviewMetaContext.Provider value={reviewMeta}>
+        <EvidenceLinkContext.Provider value={evidenceLinks}>
+          {items}
+        </EvidenceLinkContext.Provider>
+      </ReviewMetaContext.Provider>
     </DiffViewProvider>
   );
 }
@@ -794,23 +828,60 @@ function isEvidenceBlock(
   return block?.type === "diff" || block?.type === "annotated-code";
 }
 
+const ReviewMetaContext = createContext<{
+  recommendation: ReviewRecommendation | null;
+}>({ recommendation: null });
+
+// Asides fold to their one-line claims in the renderer.
+function isAside(block: ReviewBlock) {
+  return (
+    "severity" in block &&
+    (block.severity === "minor" || block.severity === "fyi")
+  );
+}
+
+// On a merge recommendation nothing below the verdict is load-bearing, so
+// every card starts as a claim line; without one, a lone card is the proof
+// itself and starts open.
+function startsOpen(
+  block: EvidenceBlockData,
+  runLength: number,
+  recommendation: ReviewRecommendation | null,
+) {
+  if (block.severity === "blocking") {
+    return true;
+  }
+  if (isAside(block)) {
+    return false;
+  }
+  if (recommendation === "merge" || recommendation === "merge-with-nits") {
+    return false;
+  }
+  return runLength === 1;
+}
+
 function EvidenceGroup({
+  aside = false,
   heading,
   blocks,
   threadsByBlock,
   onAnchor,
 }: {
+  aside?: boolean;
   heading: Extract<ReviewBlock, { type: "section" }> | null;
   blocks: EvidenceBlockData[];
   threadsByBlock: Map<string, Thread[]>;
   onAnchor: (anchor: ReviewAnchor) => void;
 }) {
-  // A lone evidence card is the proof itself, so it starts open; a set starts
-  // collapsed and reads as an index of claims.
-  const [openIds, setOpenIds] = useState<Set<string>>(() => {
-    const first = blocks[0];
-    return new Set(blocks.length === 1 && first ? [first.id] : []);
-  });
+  const { recommendation } = useContext(ReviewMetaContext);
+  const [openIds, setOpenIds] = useState<Set<string>>(
+    () =>
+      new Set(
+        blocks
+          .filter((block) => startsOpen(block, blocks.length, recommendation))
+          .map((block) => block.id),
+      ),
+  );
   useEffect(() => {
     function activate(event: Event) {
       const blockId = (event as CustomEvent<{ blockId?: string }>).detail
@@ -827,10 +898,22 @@ function EvidenceGroup({
   const allOpen = blocks.every((block) => openIds.has(block.id));
 
   return (
-    <section className="space-y-3">
-      {heading || blocks.length > 1 ? (
+    <section
+      className="space-y-3"
+      data-evidence-aside={aside ? "true" : undefined}
+    >
+      {heading || aside || blocks.length > 1 ? (
         <div className="flex items-center justify-between gap-3">
-          {heading ? (
+          {aside ? (
+            <h2
+              className="text-sm font-semibold text-muted-foreground"
+              data-block-id={heading?.id}
+              data-text-anchorable={heading ? "true" : undefined}
+              id={heading?.id}
+            >
+              {`${heading?.data.title ?? "Minor findings"} (${blocks.length})`}
+            </h2>
+          ) : heading ? (
             <h2
               className="text-xl font-semibold"
               data-block-id={heading.id}
@@ -901,6 +984,15 @@ function evidenceFindingLabels(block: EvidenceBlockData) {
   return [...new Set(labels)].slice(0, 3);
 }
 
+function severityChipClass(severity: BlockSeverity) {
+  const classes = {
+    blocking: "bg-red-100 text-red-800",
+    minor: "bg-slate-200 text-slate-700",
+    fyi: "bg-slate-200 text-slate-700",
+  };
+  return classes[severity];
+}
+
 function EvidenceCard({
   block,
   open,
@@ -932,6 +1024,7 @@ function EvidenceCard({
     <article
       id={block.id}
       className="group scroll-mt-16 overflow-clip rounded-lg border bg-card"
+      data-severity={block.severity}
     >
       <div
         className={`sticky top-12 z-[5] flex items-center gap-3 rounded-t-lg bg-muted px-3 py-2 ${
@@ -976,6 +1069,15 @@ function EvidenceCard({
                 <Code2 className="h-3.5 w-3.5 shrink-0" />
               )}
               <span className="truncate">{block.data.filename}</span>
+              {block.severity ? (
+                <span
+                  className={`shrink-0 rounded-full px-1.5 py-0.5 font-sans text-[10px] font-semibold ${severityChipClass(
+                    block.severity,
+                  )}`}
+                >
+                  {block.severity}
+                </span>
+              ) : null}
               {findings.map((label) => (
                 <span
                   key={label}
@@ -1093,7 +1195,9 @@ function CommentableBlock({
         compactWithPrevious ? "!mt-0 pt-0" : ""
       }`}
     >
-      {block.summary && block.type !== "image-diff" ? (
+      {block.summary &&
+      block.type !== "image-diff" &&
+      !(block.type === "rich-text" && isAside(block)) ? (
         <p
           className="mb-2 text-sm font-medium leading-6"
           data-block-id={block.id}
@@ -1150,6 +1254,9 @@ function BlockRenderer({
 }) {
   switch (block.type) {
     case "rich-text":
+      if (isAside(block)) {
+        return <FoldedProse block={block} />;
+      }
       return (
         <div
           className="recap-prose max-w-[58rem]"
@@ -1306,6 +1413,7 @@ function CalloutBlock({
 }: {
   block: Extract<ReviewBlock, { type: "callout" }>;
 }) {
+  const recommendation = block.data.recommendation;
   return (
     <div
       className={`rounded-lg border border-l-4 px-4 py-3 ${calloutToneClass(
@@ -1314,6 +1422,16 @@ function CalloutBlock({
       data-block-id={block.id}
       data-text-anchorable="true"
     >
+      {recommendation ? (
+        <span
+          className={`mb-2 inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${
+            recommendationBadge(recommendation).className
+          }`}
+          data-recommendation={recommendation}
+        >
+          {recommendationBadge(recommendation).label}
+        </span>
+      ) : null}
       <div className="recap-prose max-w-[58rem]">
         <ReactMarkdown
           components={markdownComponents}
@@ -1324,6 +1442,99 @@ function CalloutBlock({
       </div>
     </div>
   );
+}
+
+// The appendix slot: prose graded minor or fyi folds to its summary line.
+function FoldedProse({
+  block,
+}: {
+  block: Extract<ReviewBlock, { type: "rich-text" }>;
+}) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    function activate(event: Event) {
+      const blockId = (event as CustomEvent<{ blockId?: string }>).detail
+        ?.blockId;
+      if (blockId === block.id) {
+        setOpen(true);
+      }
+    }
+    window.addEventListener("sieve:activate-block", activate);
+    return () => window.removeEventListener("sieve:activate-block", activate);
+  }, [block.id]);
+
+  return (
+    <section
+      className="overflow-clip rounded-lg border bg-card"
+      data-folded-prose
+      data-severity={block.severity}
+    >
+      <button
+        aria-expanded={open}
+        className={`group/prose flex w-full cursor-pointer items-center gap-2 bg-muted px-3 py-2 text-left transition-colors hover:bg-foreground/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+          open ? "border-b" : ""
+        }`}
+        title={open ? "Collapse the notes" : "Expand the notes"}
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+      >
+        <ChevronDown
+          className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover/prose:text-foreground ${
+            open ? "" : "-rotate-90"
+          }`}
+        />
+        <span
+          className="min-w-0 flex-1 text-sm font-medium leading-5"
+          data-block-id={block.id}
+          data-text-anchorable="true"
+        >
+          {block.summary ?? "Notes"}
+        </span>
+        {block.severity ? (
+          <span
+            className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${severityChipClass(
+              block.severity,
+            )}`}
+          >
+            {block.severity}
+          </span>
+        ) : null}
+      </button>
+      {open ? (
+        <div
+          className="recap-prose max-w-[58rem] px-4 py-3"
+          data-block-id={block.id}
+          data-text-anchorable="true"
+        >
+          <ReactMarkdown
+            components={markdownComponents}
+            remarkPlugins={[remarkGfm]}
+          >
+            {block.data.markdown}
+          </ReactMarkdown>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function recommendationBadge(recommendation: ReviewRecommendation) {
+  const badges = {
+    merge: { label: "Merge", className: "bg-emerald-100 text-emerald-800" },
+    "merge-with-nits": {
+      label: "Merge with nits",
+      className: "bg-emerald-100 text-emerald-800",
+    },
+    "needs-changes": {
+      label: "Needs changes",
+      className: "bg-amber-100 text-amber-900",
+    },
+    "cannot-judge-alone": {
+      label: "Can't judge alone",
+      className: "bg-slate-200 text-slate-700",
+    },
+  };
+  return badges[recommendation];
 }
 
 function calloutToneClass(
@@ -1951,7 +2162,20 @@ function ImageDiffBlock({
 }: {
   block: Extract<ReviewBlock, { type: "image-diff" }>;
 }) {
-  const [open, setOpen] = useState(true);
+  // Pixels are usually the decisive artifact, so the comparison stays open
+  // unless the author explicitly filed it as an aside.
+  const [open, setOpen] = useState(!isAside(block));
+  useEffect(() => {
+    function activate(event: Event) {
+      const blockId = (event as CustomEvent<{ blockId?: string }>).detail
+        ?.blockId;
+      if (blockId === block.id) {
+        setOpen(true);
+      }
+    }
+    window.addEventListener("sieve:activate-block", activate);
+    return () => window.removeEventListener("sieve:activate-block", activate);
+  }, [block.id]);
   const [expanded, setExpanded] = useState<{
     label: string;
     attachmentId: string;
@@ -2018,6 +2242,7 @@ function ImageDiffBlock({
   return (
     <section
       className="overflow-clip rounded-lg border bg-card"
+      data-severity={block.severity}
       data-visual-comparison
     >
       <button
