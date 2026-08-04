@@ -119,14 +119,12 @@ test("file-tree entries expand their full patch in place", async ({
 test("seeded image diff and mermaid interactions work", async ({ page }) => {
   await page.goto("/reviews/seed-credential-app-qr");
   const visualBlock = page.locator("article#visual-diff-credential-acceptance");
-  await expect(
-    visualBlock.getByRole("heading", { name: "credential-acceptance" }),
-  ).toBeVisible();
-  await expect(visualBlock.getByText("Visual comparison")).toBeVisible();
+  await expect(visualBlock.getByText("credential-acceptance")).toBeVisible();
+  // Before, after, and diff share one row.
   const visualGeometry = await visualBlock.evaluate((element) => {
-    const container = element.querySelector("[data-visual-comparison]");
-    const before = element.querySelector('[data-visual-panel="merge-base"]');
-    const after = element.querySelector('[data-visual-panel="this branch"]');
+    const container = element.querySelector("[data-visual-primary]");
+    const before = element.querySelector('[data-visual-panel="before"]');
+    const after = element.querySelector('[data-visual-panel="after"]');
     const difference = element.querySelector('[data-visual-panel="diff"]');
     if (!container || !before || !after || !difference) {
       return null;
@@ -138,27 +136,23 @@ test("seeded image diff and mermaid interactions work", async ({ page }) => {
     return {
       containerWidth: containerRect.width,
       beforeWidth: beforeRect.width,
-      afterWidth: afterRect.width,
       differenceWidth: differenceRect.width,
-      comparisonBottom: Math.max(beforeRect.bottom, afterRect.bottom),
+      beforeTop: beforeRect.top,
+      afterTop: afterRect.top,
       differenceTop: differenceRect.top,
     };
   });
   expect(visualGeometry).not.toBeNull();
   expect(visualGeometry?.beforeWidth).toBeGreaterThan(
-    (visualGeometry?.containerWidth ?? 0) * 0.4,
+    (visualGeometry?.containerWidth ?? 0) * 0.25,
   );
-  expect(visualGeometry?.afterWidth).toBeGreaterThan(
-    (visualGeometry?.containerWidth ?? 0) * 0.4,
+  expect(visualGeometry?.differenceWidth).toBeLessThan(
+    (visualGeometry?.containerWidth ?? 0) * 0.45,
   );
-  expect(visualGeometry?.differenceWidth).toBeGreaterThan(
-    (visualGeometry?.containerWidth ?? 0) * 0.9,
-  );
-  expect(visualGeometry?.differenceTop).toBeGreaterThanOrEqual(
-    visualGeometry?.comparisonBottom ?? 0,
-  );
+  expect(visualGeometry?.afterTop).toBe(visualGeometry?.beforeTop);
+  expect(visualGeometry?.differenceTop).toBe(visualGeometry?.beforeTop);
   const thumbnail = page.getByRole("img", {
-    name: /credential-acceptance .*this branch/i,
+    name: /credential-acceptance after/i,
   });
   await thumbnail.scrollIntoViewIfNeeded();
   await expectHittable(thumbnail);

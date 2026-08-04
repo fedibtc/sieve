@@ -1651,11 +1651,45 @@ function FileTreeRow({
   onAnchor: (anchor: ReviewAnchor) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const row = (
+    <>
+      <ChangeBadge change={entry.change} />
+      <span className="min-w-0">
+        <PathLabel path={entry.path} />
+        {entry.note ? (
+          <span className="block truncate text-xs text-muted-foreground">
+            {entry.note}
+          </span>
+        ) : null}
+      </span>
+      <span className="text-right font-mono text-xs">
+        <span className="text-emerald-700">+{entry.additions ?? 0}</span>{" "}
+        <span className="text-red-700">-{entry.deletions ?? 0}</span>
+      </span>
+    </>
+  );
   return (
-    <div className="border-b last:border-b-0">
+    <div className="group/file border-b last:border-b-0">
       <div className="flex items-stretch">
+        {entry.patch ? (
+          <button
+            aria-expanded={expanded}
+            className="grid min-w-0 flex-1 cursor-pointer grid-cols-[36px_minmax(0,1fr)_110px] items-center gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            title={expanded ? "Hide the full patch" : "Show the full patch"}
+            type="button"
+            onClick={() => setExpanded((current) => !current)}
+          >
+            {row}
+          </button>
+        ) : (
+          <div className="grid min-w-0 flex-1 grid-cols-[36px_minmax(0,1fr)_110px] items-center gap-3 px-3 py-2 text-sm">
+            {row}
+          </div>
+        )}
         <button
-          className="grid min-w-0 flex-1 grid-cols-[36px_minmax(0,1fr)_110px] items-center gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          aria-label={`Comment on ${entry.path}`}
+          className="shrink-0 cursor-pointer px-2 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover/file:opacity-100"
+          title={`Comment on ${entry.path}`}
           type="button"
           onClick={() =>
             onAnchor({
@@ -1665,23 +1699,11 @@ function FileTreeRow({
             })
           }
         >
-          <ChangeBadge change={entry.change} />
-          <span className="min-w-0">
-            <PathLabel path={entry.path} />
-            {entry.note ? (
-              <span className="block truncate text-xs text-muted-foreground">
-                {entry.note}
-              </span>
-            ) : null}
-          </span>
-          <span className="text-right font-mono text-xs">
-            <span className="text-emerald-700">+{entry.additions ?? 0}</span>{" "}
-            <span className="text-red-700">-{entry.deletions ?? 0}</span>
-          </span>
+          <MessageSquare className="h-3.5 w-3.5" />
         </button>
         {entry.patch ? (
           <button
-            className="flex shrink-0 items-center gap-1 px-3 text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex shrink-0 cursor-pointer items-center gap-1 px-3 text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             type="button"
             aria-expanded={expanded}
             onClick={() => setExpanded((current) => !current)}
@@ -1929,6 +1951,7 @@ function ImageDiffBlock({
 }: {
   block: Extract<ReviewBlock, { type: "image-diff" }>;
 }) {
+  const [open, setOpen] = useState(true);
   const [expanded, setExpanded] = useState<{
     label: string;
     attachmentId: string;
@@ -1941,39 +1964,26 @@ function ImageDiffBlock({
     tone: "neutral" | "diff";
   }> = [];
   if (block.data.before) {
-    images.push({
-      label: "merge-base",
-      ref: block.data.before,
-      tone: "neutral",
-    });
+    images.push({ label: "before", ref: block.data.before, tone: "neutral" });
   }
   if (block.data.after) {
-    images.push({
-      label: "this branch",
-      ref: block.data.after,
-      tone: "neutral",
-    });
+    images.push({ label: "after", ref: block.data.after, tone: "neutral" });
   }
   if (block.data.diff) {
     images.push({ label: "diff", ref: block.data.diff, tone: "diff" });
   }
-  const comparisonImages = images.filter((image) => image.tone === "neutral");
-  const differenceImage = images.find((image) => image.tone === "diff");
 
-  function renderFigure(
-    image: (typeof images)[number],
-    emphasis: "comparison" | "difference",
-  ) {
+  function renderFigure(image: (typeof images)[number]) {
     return (
       <figure
         key={image.label}
         className={`min-w-0 overflow-hidden rounded-md border bg-card ${
-          emphasis === "difference" ? "border-amber-300 bg-amber-50/30" : ""
+          image.tone === "diff" ? "border-amber-300 bg-amber-50/30" : ""
         }`}
         data-visual-panel={image.label}
       >
         <button
-          className="block w-full bg-muted/40 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="block w-full cursor-zoom-in bg-muted/40 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           type="button"
           onClick={() =>
             setExpanded({
@@ -1986,9 +1996,7 @@ function ImageDiffBlock({
         >
           <Image
             alt={`${block.data.name} ${image.label}`}
-            className={`h-auto w-full object-contain ${
-              emphasis === "difference" ? "max-h-[720px]" : "max-h-[640px]"
-            }`}
+            className="h-auto max-h-[640px] w-full object-contain"
             height={image.ref.height}
             loading="lazy"
             unoptimized
@@ -1997,7 +2005,7 @@ function ImageDiffBlock({
           />
         </button>
         <figcaption
-          className={`border-t px-3 py-2 text-sm font-medium ${
+          className={`border-t px-3 py-1.5 text-center text-sm font-medium ${
             image.tone === "diff" ? "text-amber-800" : "text-muted-foreground"
           }`}
         >
@@ -2009,45 +2017,59 @@ function ImageDiffBlock({
 
   return (
     <section
-      className="-mx-3 space-y-5 border-y bg-card px-3 py-5 sm:-mx-4 sm:px-4"
+      className="overflow-clip rounded-lg border bg-card"
       data-visual-comparison
     >
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 items-start gap-3">
-          <span className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-foreground text-background">
-            <ImageIcon className="h-4 w-4" />
+      <button
+        aria-expanded={open}
+        className={`group/visual flex w-full cursor-pointer items-center gap-3 bg-muted px-3 py-2 text-left transition-colors hover:bg-foreground/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+          open ? "border-b" : ""
+        }`}
+        title={open ? "Collapse the comparison" : "Expand the comparison"}
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+      >
+        <ChevronDown
+          className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover/visual:text-foreground ${
+            open ? "" : "-rotate-90"
+          }`}
+        />
+        <ImageIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1">
+          {block.summary ? (
+            <span className="block text-sm font-medium leading-5">
+              {block.summary}
+            </span>
+          ) : null}
+          <span
+            className={`block truncate text-xs text-muted-foreground ${
+              block.summary ? "mt-0.5" : "text-sm font-medium text-foreground"
+            }`}
+            title={
+              block.data.baseline
+                ? `${block.data.baseline.ref} - ${block.data.baseline.platform}`
+                : undefined
+            }
+          >
+            {block.data.name}
           </span>
-          <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase text-muted-foreground">
-              Visual comparison
-            </p>
-            <h3
-              className="truncate text-xl font-semibold"
-              title={
-                block.data.baseline
-                  ? `${block.data.baseline.ref} - ${block.data.baseline.platform}`
-                  : undefined
-              }
-            >
-              {block.data.name}
-            </h3>
-          </div>
-        </div>
+        </span>
         <Badge tone={imageDiffStatusTone(block.data.status)}>
           {block.data.status}
         </Badge>
-      </div>
-      <div
-        className={`grid gap-4 ${
-          comparisonImages.length > 1 ? "md:grid-cols-2" : ""
-        }`}
-        data-visual-primary
-      >
-        {comparisonImages.map((image) => renderFigure(image, "comparison"))}
-      </div>
-      {differenceImage ? (
-        <div data-visual-difference>
-          {renderFigure(differenceImage, "difference")}
+      </button>
+      {open ? (
+        <div
+          className={`grid gap-3 p-3 ${
+            images.length === 3
+              ? "sm:grid-cols-3"
+              : images.length === 2
+                ? "sm:grid-cols-2"
+                : ""
+          }`}
+          data-visual-primary
+        >
+          {images.map((image) => renderFigure(image))}
         </div>
       ) : null}
       {expanded ? (

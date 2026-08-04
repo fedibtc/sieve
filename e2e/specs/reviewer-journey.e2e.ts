@@ -19,9 +19,11 @@ test("seeded reviewer journey composes read-only interactions", async ({
   await expect(
     page.getByText(/QR\/property coverage, adds Playwright harness checks/),
   ).toBeVisible();
-  await expect(page.getByText("Visual comparison")).toBeVisible();
-  await expect(page.locator('[data-visual-panel="merge-base"]')).toBeVisible();
-  await expect(page.locator('[data-visual-panel="this branch"]')).toBeVisible();
+  await expect(
+    page.getByText("credential-acceptance", { exact: true }),
+  ).toBeVisible();
+  await expect(page.locator('[data-visual-panel="before"]')).toBeVisible();
+  await expect(page.locator('[data-visual-panel="after"]')).toBeVisible();
   await expect(page.locator('[data-visual-panel="diff"]')).toBeVisible();
 
   const endpoint = page.getByRole("button", {
@@ -47,7 +49,7 @@ test("seeded reviewer journey composes read-only interactions", async ({
   ).toContainText("state coupling");
 
   const thumbnail = page.getByRole("img", {
-    name: /credential-acceptance .*this branch/i,
+    name: /credential-acceptance after/i,
   });
   await thumbnail.scrollIntoViewIfNeeded();
   await expectHittable(thumbnail);
@@ -78,9 +80,8 @@ test("seeded reviewer journey composes read-only interactions", async ({
   );
 
   await page
-    .locator("article#footprint")
     .getByRole("button", {
-      name: /src\/credential\/domain\/qrPayloads\.property\.test\.ts/,
+      name: "Comment on src/credential/domain/qrPayloads.property.test.ts",
     })
     .click();
   await expect(page.getByTitle("Clear anchor")).toContainText(

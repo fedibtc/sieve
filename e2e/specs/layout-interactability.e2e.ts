@@ -36,7 +36,7 @@ test("sticky chrome and overlays do not obscure core controls", async ({
   );
 
   const thumbnail = page.getByRole("img", {
-    name: /credential-acceptance .*this branch/i,
+    name: /credential-acceptance after/i,
   });
   await thumbnail.click();
   const close = page.getByRole("button", { name: /close image/i });
