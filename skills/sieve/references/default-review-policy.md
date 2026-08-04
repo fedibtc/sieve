@@ -42,12 +42,21 @@ sieve publish --manifest recap.json --review-warning "<what is missing and why>"
 The flag publishes the supplied text as a warning callout. It is not a waiver,
 and the CLI does not decide whether the evidence was required.
 
+## Verdict recommendation and finding severity
+
+The verdict callout accepts a machine-readable `recommendation`: `merge`, `merge-with-nits`, `needs-changes`, or `cannot-judge-alone`. The renderer badges it and derives the default fold state from it: on a merge recommendation every evidence card starts collapsed to its claim line, because nothing below the verdict is load-bearing for the decision.
+
+Evidence blocks (`diff`, `annotated-code`, `rich-text`, `image-diff`) accept a `severity`: `blocking`, `minor`, or `fyi`. Blocking evidence renders open with a red mark. Minor and fyi evidence folds into a "Minor findings" group that shows only one-line claims, so write each block's `summary` as a claim the reader can act on without expanding the card.
+
+- A finding that should change the merge decision is `blocking`.
+- A finding worth recording but not acting on in this PR (dead code, misleading naming, style drift) is `minor`: one sentence in the summary at most, the folded card carries the mechanism.
+- Verification narrative, the tracing that makes the verdict credible, belongs in a `rich-text` block with `severity: fyi` whose summary names the question it answers (for example "How the limit coupling was checked"). The renderer folds it; the summary prose should not restate it.
+
 ## Recap shape
 
 A useful default shape is:
 
-1. A short outcome summary covering what changed, why, material risk, and the
-   validation that actually ran.
+1. A verdict callout carrying a `recommendation`, then a short outcome summary covering what changed, why, material risk, and the validation that actually ran.
 2. The scaffold's `change-shape` block: areas by directory sized by churn,
    derived mechanically from the diff. Keep it near the top so the reader
    sees the shape of the change before any detail; there is no reason to
