@@ -83,6 +83,7 @@ enum Commands {
     Reopen(ReviewId),
     Session(SessionCommand),
     Attach(AttachArgs),
+    AttachDiff(AttachDiffArgs),
     PrComment(ReviewId),
     Skill(SkillCommand),
     Policy(PolicyCommand),
@@ -219,6 +220,25 @@ struct SessionEndArgs {
 #[derive(Args)]
 struct AttachArgs {
     file: PathBuf,
+}
+
+#[derive(Args)]
+struct AttachDiffArgs {
+    before: PathBuf,
+    after: PathBuf,
+    diff: PathBuf,
+    /// Screen name shown on the block; defaults to the before file's stem
+    #[arg(long)]
+    name: Option<String>,
+    /// One-line claim rendered as the block's headline
+    #[arg(long)]
+    summary: Option<String>,
+    /// Block id; defaults to image-diff-<name>
+    #[arg(long)]
+    id: Option<String>,
+    /// Insert the block into this manifest instead of printing it
+    #[arg(long)]
+    manifest: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -374,6 +394,7 @@ fn run(cli: Cli, json_output: bool) -> Result<()> {
         Commands::Reopen(args) => update_status(&client, args.review_id, "open"),
         Commands::Session(args) => session(&client, args.command),
         Commands::Attach(args) => attach(&client, args),
+        Commands::AttachDiff(args) => attach_diff(&client, args),
         Commands::PrComment(args) => pr_comment(&client, args.review_id),
         Commands::Skill(args) => match args.command {
             SkillSubcommand::Show(show_args) => {
@@ -1279,6 +1300,139 @@ fn attach(client: &ApiClient, args: AttachArgs) -> Result<Value> {
         return upload_patch(client, data);
     };
     upload_media(client, data, &filename, mime_type)
+}
+
+fn attach_diff(client: &ApiClient, args: AttachDiffArgs) -> Result<Value> {
+    let name = match args.name {
+        Some(name) => name,
+        None => args
+            .before
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .ok_or_else(|| {
+                anyhow!("--name is required when the before filename is not valid UTF-8")
+            })?
+            .to_string(),
+    };
+    if name.is_empty() || name.len() > 120 {
+        bail!(
+            "screen name must be 1 to 120 characters, got {}",
+            name.len()
+        );
+    }
+    let block_id = args
+        .id
+        .unwrap_or_else(|| format!("image-diff-{}", slugify(&name)));
+
+    let before = upload_image_ref(client, &args.before)?;
+    let after = upload_image_ref(client, &args.after)?;
+    let diff = upload_image_ref(client, &args.diff)?;
+    let mut block = json!({
+        "id": block_id,
+        "type": "image-diff",
+        "data": {
+            "name": name,
+            "status": "changed",
+            "before": before,
+            "after": after,
+            "diff": diff,
+        }
+    });
+    if let Some(summary) = args.summary {
+        block["summary"] = Value::String(summary);
+    }
+
+    let Some(manifest_path) = args.manifest else {
+        return Ok(block);
+    };
+    let raw = fs::read_to_string(&manifest_path)
+        .with_context(|| format!("failed to read {}", manifest_path.display()))?;
+    let mut manifest: Value = serde_json::from_str(&raw)
+        .with_context(|| format!("{} is not valid JSON", manifest_path.display()))?;
+    let inserted_id = insert_image_diff_block(&mut manifest, block)?;
+    fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?)?;
+    Ok(json!({ "manifest": manifest_path, "block": inserted_id }))
+}
+
+fn upload_image_ref(client: &ApiClient, path: &Path) -> Result<Value> {
+    let data = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+    if data.len() as u64 > MAX_ATTACHMENT_BYTES {
+        bail!(
+            "{} exceeds the {MAX_ATTACHMENT_BYTES} byte attachment limit",
+            path.display()
+        );
+    }
+    if !is_png(&data) {
+        bail!("{} is not a PNG screenshot", path.display());
+    }
+    let filename = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| anyhow!("attachment filename is not valid UTF-8"))?
+        .to_string();
+    let uploaded = upload_media(client, data, &filename, "image/png")?;
+    let field = |key: &str| {
+        uploaded
+            .get(key)
+            .cloned()
+            .ok_or_else(|| anyhow!("attachment upload response is missing `{key}`"))
+    };
+    Ok(json!({
+        "attachmentId": field("attachmentId")?,
+        "width": field("width")?,
+        "height": field("height")?,
+    }))
+}
+
+fn slugify(name: &str) -> String {
+    let slug = name
+        .to_ascii_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect::<String>();
+    slug.trim_matches('-').replace("--", "-")
+}
+
+fn insert_image_diff_block(manifest: &mut Value, mut block: Value) -> Result<String> {
+    let blocks = manifest
+        .pointer_mut("/content/blocks")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| anyhow!("content.blocks must be an array"))?;
+    let existing_ids = blocks
+        .iter()
+        .filter_map(|entry| entry.get("id").and_then(Value::as_str))
+        .collect::<BTreeSet<_>>();
+    let base_id = block
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("block is missing `id`"))?
+        .to_string();
+    let id = (1..)
+        .map(|suffix| {
+            if suffix == 1 {
+                base_id.clone()
+            } else {
+                format!("{base_id}-{suffix}")
+            }
+        })
+        .find(|candidate| !existing_ids.contains(candidate.as_str()))
+        .expect("an unused generated block id");
+    block["id"] = Value::String(id.clone());
+    // Pictures render directly under the verdict; appending after the last
+    // image-diff keeps multiple screens in insertion order.
+    let insert_at = blocks
+        .iter()
+        .rposition(|entry| entry.get("type").and_then(Value::as_str) == Some("image-diff"))
+        .map(|index| index + 1)
+        .or_else(|| {
+            blocks
+                .iter()
+                .position(|entry| entry.get("id").and_then(Value::as_str) == Some("verdict"))
+                .map(|index| index + 1)
+        })
+        .unwrap_or(blocks.len());
+    blocks.insert(insert_at, block);
+    Ok(id)
 }
 
 fn media_mime_type(path: &Path, data: &[u8]) -> Option<&'static str> {
@@ -2488,11 +2642,68 @@ fn validate_manifest_content(manifest: &Value) -> Result<()> {
         .compile(&schema)
         .map_err(|error| anyhow!("schema compile failed: {error}"))?;
     if let Err(errors) = compiled.validate(content) {
-        let messages = errors.map(|error| error.to_string()).collect::<Vec<_>>();
+        let messages = errors
+            .map(|error| describe_validation_error(&schema, content, &error))
+            .collect::<Vec<_>>();
         bail!("schema validation failed: {}", messages.join("; "));
     }
     validate_document_invariants(content)?;
     Ok(())
+}
+
+// A failed block match otherwise reads "{...} is not valid under any of the
+// given schemas" with the whole block inlined and no field named.
+fn describe_validation_error(
+    schema: &Value,
+    content: &Value,
+    error: &jsonschema::ValidationError,
+) -> String {
+    let path = error.instance_path.to_string();
+    if let Some(message) = explain_block_error(schema, content, &path) {
+        return message;
+    }
+    if path.is_empty() {
+        error.to_string()
+    } else {
+        format!("{error} (at {path})")
+    }
+}
+
+fn explain_block_error(schema: &Value, content: &Value, path: &str) -> Option<String> {
+    let index = path.strip_prefix("/blocks/")?.parse::<usize>().ok()?;
+    let block = content.get("blocks")?.get(index)?;
+    let block_type = block.get("type").and_then(Value::as_str)?;
+    let Some(branch) = schema
+        .pointer("/properties/blocks/items/oneOf")?
+        .as_array()?
+        .iter()
+        .find(|candidate| {
+            candidate
+                .pointer("/properties/type/const")
+                .and_then(Value::as_str)
+                == Some(block_type)
+        })
+    else {
+        return Some(format!(
+            "blocks[{index}]: unknown block type `{block_type}`"
+        ));
+    };
+    let compiled = jsonschema::JSONSchema::compile(branch).ok()?;
+    let details = match compiled.validate(block) {
+        Ok(()) => format!("block `{block_type}` failed cross-block rules"),
+        Err(errors) => errors
+            .map(|error| {
+                let field = error.instance_path.to_string();
+                if field.is_empty() {
+                    error.to_string()
+                } else {
+                    format!("{error} (at {field})")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("; "),
+    };
+    Some(format!("blocks[{index}] (`{block_type}`): {details}"))
 }
 
 fn insert_review_output_warning(
@@ -4147,6 +4358,104 @@ mod tests {
             Some("warning")
         );
         validate_manifest_content(&manifest).unwrap();
+    }
+
+    #[test]
+    fn inserts_image_diff_blocks_after_the_verdict_in_capture_order() {
+        let mut manifest = json!({ "content": { "version": 1, "blocks": [
+            {
+                "id": "verdict",
+                "type": "callout",
+                "data": { "tone": "info", "markdown": "**Safe.**" }
+            },
+            {
+                "id": "summary",
+                "type": "rich-text",
+                "data": { "markdown": "## Outcome\nReady." }
+            }
+        ] } });
+        let block = |name: &str| {
+            json!({
+                "id": format!("image-diff-{name}"),
+                "type": "image-diff",
+                "data": {
+                    "name": name,
+                    "status": "changed",
+                    "before": { "attachmentId": "a1", "width": 720, "height": 1280 },
+                    "after": { "attachmentId": "a2", "width": 720, "height": 1280 },
+                    "diff": { "attachmentId": "a3", "width": 720, "height": 1280 },
+                }
+            })
+        };
+        let first = insert_image_diff_block(&mut manifest, block("welcome")).unwrap();
+        let second = insert_image_diff_block(&mut manifest, block("wallet")).unwrap();
+        let third = insert_image_diff_block(&mut manifest, block("welcome")).unwrap();
+
+        assert_eq!(first, "image-diff-welcome");
+        assert_eq!(second, "image-diff-wallet");
+        assert_eq!(third, "image-diff-welcome-2");
+        let order = manifest
+            .pointer("/content/blocks")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .map(|entry| entry.get("id").and_then(Value::as_str).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            order,
+            [
+                "verdict",
+                "image-diff-welcome",
+                "image-diff-wallet",
+                "image-diff-welcome-2",
+                "summary"
+            ]
+        );
+        validate_manifest_content(&manifest).unwrap();
+    }
+
+    #[test]
+    fn schema_errors_name_the_block_and_field() {
+        let content = json!({ "version": 1, "blocks": [
+            {
+                "id": "shot",
+                "type": "image-diff",
+                "data": {
+                    "name": "welcome",
+                    "status": "changed",
+                    "before": { "attachmentId": "a1", "width": 720 },
+                    "after": { "attachmentId": "a2", "width": 720, "height": 1280 },
+                    "diff": { "attachmentId": "a3", "width": 720, "height": 1280 },
+                }
+            }
+        ] });
+        let manifest = json!({ "content": content });
+        let error = validate_manifest_content(&manifest)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("blocks[0]"), "unexpected message: {error}");
+        assert!(error.contains("image-diff"), "unexpected message: {error}");
+        assert!(error.contains("height"), "unexpected message: {error}");
+    }
+
+    #[test]
+    fn schema_errors_name_an_unknown_block_type() {
+        let manifest = json!({ "content": { "version": 1, "blocks": [
+            { "id": "x", "type": "image-dif", "data": {} }
+        ] } });
+        let error = validate_manifest_content(&manifest)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("unknown block type `image-dif`"),
+            "unexpected message: {error}"
+        );
+    }
+
+    #[test]
+    fn slugify_flattens_screen_names_to_block_ids() {
+        assert_eq!(slugify("01-welcome"), "01-welcome");
+        assert_eq!(slugify("App Settings!"), "app-settings");
     }
 
     fn read_block_fixture(name: &str) -> Value {
