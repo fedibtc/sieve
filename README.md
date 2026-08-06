@@ -110,7 +110,10 @@ For UI-facing changes, use the repository's own capture and comparison workflow.
 ```bash
 sieve attach path/to/screenshot.png
 sieve attach path/to/recording.webm
+sieve attach-diff before.png after.png diff.png --name welcome --manifest recap.json
 ```
+
+`sieve attach-diff` uploads a before/after/diff screenshot trio and emits the finished `image-diff` block, either to stdout or inserted into the manifest directly under the verdict.
 
 `sieve attach` accepts PNG, WebM, and MP4 files up to 250 MB. Production
 deployments store new attachments in a connected private Vercel Blob store.
