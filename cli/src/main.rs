@@ -1541,7 +1541,19 @@ fn upload_patch(client: &ApiClient, data: Vec<u8>) -> Result<Value> {
 }
 
 fn pr_comment(client: &ApiClient, review_id: String) -> Result<Value> {
-    upsert_pr_comment(client, &review_id, None)
+    // The comment is upserted, so omitting the sha erases a stamp an earlier
+    // review already wrote.
+    let head_sha = git(["rev-parse", "HEAD"]).ok();
+    upsert_pr_comment(client, &review_id, head_sha.as_deref())
+}
+
+// Sweeps grep this stamp verbatim to tell whether a PR moved since its last
+// review, so a format change makes every reviewed PR look unreviewed.
+fn sticky_comment_body(marker: &str, head_sha: Option<&str>, url: &str) -> String {
+    let head_line = head_sha
+        .map(|sha| format!("<!-- sieve-head:{sha} -->\n"))
+        .unwrap_or_default();
+    format!("{marker}\n{head_line}\nSieve: {url}\n")
 }
 
 fn upsert_pr_comment(client: &ApiClient, review_id: &str, head_sha: Option<&str>) -> Result<Value> {
@@ -1552,12 +1564,7 @@ fn upsert_pr_comment(client: &ApiClient, review_id: &str, head_sha: Option<&str>
         .unwrap_or("")
         .to_string();
     let marker = format!("<!-- sieve:{review_id} -->");
-    // The reviewed head rides along invisibly so a sweeper can tell whether
-    // the PR moved since the last review without keeping state anywhere.
-    let head_line = head_sha
-        .map(|sha| format!("<!-- sieve-head:{sha} -->\n"))
-        .unwrap_or_default();
-    let body = format!("{marker}\n{head_line}\nSieve: {url}\n");
+    let body = sticky_comment_body(&marker, head_sha, &url);
     let pr_number =
         command_output("gh", &["pr", "view", "--json", "number", "--jq", ".number"]).ok();
     let Some(pr_number) = pr_number.filter(|v| !v.trim().is_empty()) else {
@@ -3396,6 +3403,17 @@ mod tests {
 
     static CWD_LOCK: Mutex<()> = Mutex::new(());
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn sticky_comment_carries_the_reviewed_head() {
+        let marker = "<!-- sieve:rev_123 -->";
+        let stamped = sticky_comment_body(marker, Some("abc123"), "https://sieve.fedi.xyz/r/1");
+        assert!(stamped.contains("<!-- sieve-head:abc123 -->"));
+        assert!(stamped.contains(marker));
+        // A sweep reading this cannot tell the PR was reviewed, so it dispatches again.
+        let bare = sticky_comment_body(marker, None, "https://sieve.fedi.xyz/r/1");
+        assert!(!bare.contains("sieve-head:"));
+    }
 
     #[test]
     fn publish_requires_an_origin() {
