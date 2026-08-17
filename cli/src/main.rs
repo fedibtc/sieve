@@ -17,11 +17,14 @@ use std::{
 };
 
 mod policy;
+mod trace;
 
 const DEFAULT_HOST: &str = "https://sieve.fedi.xyz";
 const MAX_ATTACHMENT_BYTES: u64 = 250_000_000;
 // Patches go through the direct upload route, which the server caps at 2 MB.
 const MAX_PATCH_BYTES: u64 = 2_000_000;
+const MAX_TRACE_BYTES: usize = 20_000_000;
+const TRACE_MIME_TYPE: &str = "application/x-ndjson";
 const MAX_KEY_DIFFS: usize = 5;
 const MAX_DIFF_LINES: usize = 150;
 const MAX_BLOCKS: usize = 120;
@@ -85,6 +88,8 @@ enum Commands {
     Attach(AttachArgs),
     AttachDiff(AttachDiffArgs),
     PrComment(ReviewId),
+    Run(RunCommand),
+    Versions(VersionsArgs),
     Skill(SkillCommand),
     Policy(PolicyCommand),
 }
@@ -149,6 +154,101 @@ struct PublishOptions {
     allow_unverified_diffs: bool,
     #[arg(long = "review-warning")]
     review_warnings: Vec<String>,
+    #[command(flatten)]
+    trace: TraceOptions,
+}
+
+#[derive(Args, Clone, Default)]
+struct TraceOptions {
+    /// Claude Code stream-json transcript of the run that wrote this review,
+    /// recorded alongside the published version
+    #[arg(long)]
+    trace: Option<PathBuf>,
+    /// Prompt the run was given, hashed so two runs can be compared
+    #[arg(long)]
+    trace_prompt: Option<PathBuf>,
+    /// Defaults to ci when GITHUB_ACTIONS or CI is set, local otherwise
+    #[arg(long, value_enum)]
+    trace_trigger: Option<TriggerArg>,
+    /// Skip uploading the raw transcript, keeping only the typed steps
+    #[arg(long)]
+    trace_no_transcript: bool,
+}
+
+#[derive(Copy, Clone, ValueEnum)]
+enum TriggerArg {
+    Ci,
+    Local,
+}
+
+impl TriggerArg {
+    fn as_str(self) -> &'static str {
+        match self {
+            TriggerArg::Ci => "ci",
+            TriggerArg::Local => "local",
+        }
+    }
+}
+
+#[derive(Args)]
+struct RunCommand {
+    #[command(subcommand)]
+    command: RunSubcommand,
+}
+
+#[derive(Subcommand)]
+enum RunSubcommand {
+    /// List recorded runs, newest first
+    List(RunListArgs),
+    /// Fetch one run with its ordered steps
+    Get(RunGetArgs),
+    /// Record a run that never reached publish, which publish cannot do for you
+    Record(RunRecordArgs),
+}
+
+#[derive(Args)]
+struct RunRecordArgs {
+    #[command(flatten)]
+    trace: TraceOptions,
+    #[arg(long)]
+    review: Option<String>,
+    #[arg(long)]
+    version: Option<u32>,
+    #[arg(long)]
+    repo: Option<String>,
+    #[arg(long)]
+    branch: Option<String>,
+    #[arg(long, default_value = "failed")]
+    outcome: String,
+}
+
+#[derive(Args)]
+struct RunListArgs {
+    #[arg(long)]
+    repo: Option<String>,
+    #[arg(long)]
+    branch: Option<String>,
+    #[arg(long)]
+    review: Option<String>,
+    #[arg(long)]
+    outcome: Option<String>,
+    #[arg(long)]
+    trigger: Option<String>,
+    #[arg(long)]
+    limit: Option<u32>,
+}
+
+#[derive(Args)]
+struct RunGetArgs {
+    run_id: String,
+}
+
+#[derive(Args)]
+struct VersionsArgs {
+    review_id: String,
+    /// Fetch this version's stored content instead of listing every version
+    #[arg(long)]
+    version: Option<u32>,
 }
 
 #[derive(Args)]
@@ -396,6 +496,21 @@ fn run(cli: Cli, json_output: bool) -> Result<()> {
         Commands::Attach(args) => attach(&client, args),
         Commands::AttachDiff(args) => attach_diff(&client, args),
         Commands::PrComment(args) => pr_comment(&client, args.review_id),
+        Commands::Run(args) => match args.command {
+            RunSubcommand::List(args) => run_list(&client, args),
+            RunSubcommand::Get(args) => client.get(&format!("/api/agent/v1/runs/{}", args.run_id)),
+            RunSubcommand::Record(args) => run_record(&client, args),
+        },
+        Commands::Versions(args) => match args.version {
+            Some(version) => client.get(&format!(
+                "/api/agent/v1/reviews/{}/versions/{version}",
+                args.review_id
+            )),
+            None => client.get(&format!(
+                "/api/agent/v1/reviews/{}/versions",
+                args.review_id
+            )),
+        },
         Commands::Skill(args) => match args.command {
             SkillSubcommand::Show(show_args) => {
                 skill_show(show_args)?;
@@ -799,11 +914,278 @@ fn publish_manifest(
             "warnings": warnings,
         }));
     }
-    let mut result = client.post("/api/agent/v1/reviews", manifest)?;
+    let mut result = client.post("/api/agent/v1/reviews", manifest.clone())?;
+    if options.trace.trace.is_some() {
+        match record_run(
+            client,
+            &options.trace,
+            published_run_target(&manifest, &result),
+        ) {
+            Ok(run) => result["run"] = run,
+            // A review that published is worth more than its trace, so a
+            // capture failure degrades to a warning.
+            Err(error) => warnings.push(format!("the run record was not stored: {error}")),
+        }
+    }
     if !warnings.is_empty() {
         result["warnings"] = json!(warnings);
     }
     Ok(result)
+}
+
+fn published_run_target(manifest: &Value, result: &Value) -> RunTarget {
+    RunTarget {
+        review_id: result
+            .pointer("/review/id")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        content_version: result
+            .pointer("/review/contentVersion")
+            .and_then(Value::as_u64)
+            .map(|version| version as u32),
+        outcome: "published".into(),
+        repo: string_field(manifest, "repo").unwrap_or_default(),
+        branch: string_field(manifest, "branch").unwrap_or_default(),
+        head_sha: string_field(manifest, "headSha"),
+        pr_number: manifest.get("prNumber").and_then(Value::as_u64),
+    }
+}
+
+fn string_field(value: &Value, key: &str) -> Option<String> {
+    value.get(key).and_then(Value::as_str).map(str::to_string)
+}
+
+fn run_list(client: &ApiClient, args: RunListArgs) -> Result<Value> {
+    let mut query = vec![];
+    for (key, value) in [
+        ("repo", args.repo),
+        ("branch", args.branch),
+        ("reviewId", args.review),
+        ("outcome", args.outcome),
+        ("trigger", args.trigger),
+    ] {
+        if let Some(value) = value {
+            query.push(format!("{key}={}", urlencode(&value)));
+        }
+    }
+    if let Some(limit) = args.limit {
+        query.push(format!("limit={limit}"));
+    }
+    let path = if query.is_empty() {
+        "/api/agent/v1/runs".to_string()
+    } else {
+        format!("/api/agent/v1/runs?{}", query.join("&"))
+    };
+    client.get(&path)
+}
+
+fn run_record(client: &ApiClient, args: RunRecordArgs) -> Result<Value> {
+    let repo = args
+        .repo
+        .or_else(git_remote_repo)
+        .ok_or_else(|| anyhow!("--repo is required when the checkout has no github remote"))?;
+    let branch = match args.branch {
+        Some(branch) => branch,
+        None => git(["rev-parse", "--abbrev-ref", "HEAD"])?,
+    };
+    if args.trace.trace.is_none() {
+        bail!("--trace is required: point it at the agent's stream-json transcript");
+    }
+    record_run(
+        client,
+        &args.trace,
+        RunTarget {
+            review_id: args.review,
+            content_version: args.version,
+            outcome: args.outcome,
+            repo,
+            branch,
+            head_sha: git(["rev-parse", "HEAD"]).ok(),
+            pr_number: None,
+        },
+    )
+}
+
+struct RunTarget {
+    review_id: Option<String>,
+    content_version: Option<u32>,
+    outcome: String,
+    repo: String,
+    branch: String,
+    head_sha: Option<String>,
+    pr_number: Option<u64>,
+}
+
+fn record_run(client: &ApiClient, options: &TraceOptions, target: RunTarget) -> Result<Value> {
+    let Some(path) = options.trace.as_ref() else {
+        return Ok(Value::Null);
+    };
+    let raw =
+        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+    let (stream, truncated) = clamp_to_line_boundary(&raw, MAX_TRACE_BYTES);
+    let parsed = trace::parse(stream);
+
+    let mut steps = parsed.steps_json();
+    redact_trace_value(&mut steps);
+    let mut final_message = json!(parsed.final_message);
+    redact_trace_value(&mut final_message);
+
+    let transcript_attachment_id = if options.trace_no_transcript {
+        Value::Null
+    } else {
+        upload_trace(client, stream)?
+    };
+
+    let (prompt_path, prompt_sha256) = match options.trace_prompt.as_ref() {
+        Some(prompt) => {
+            let bytes =
+                fs::read(prompt).with_context(|| format!("failed to read {}", prompt.display()))?;
+            (
+                json!(prompt.display().to_string()),
+                json!(hex::encode(Sha256::digest(&bytes))),
+            )
+        }
+        None => (Value::Null, Value::Null),
+    };
+
+    let body = json!({
+        "reviewId": target.review_id,
+        "contentVersion": target.content_version,
+        "outcome": target.outcome,
+        "repo": target.repo,
+        "branch": target.branch,
+        "headSha": target.head_sha,
+        "prNumber": target.pr_number,
+        "trigger": trace_trigger(options),
+        "model": parsed.model,
+        "promptPath": prompt_path,
+        "promptSha256": prompt_sha256,
+        "toolVersion": env!("CARGO_PKG_VERSION"),
+        "agentVersion": parsed.agent_version,
+        "agentSessionRef": parsed.session_ref,
+        "hostname": command_output("hostname", &[]).ok(),
+        "startedAt": parsed.started_at,
+        "endedAt": parsed.ended_at,
+        "durationMs": parsed.duration_ms,
+        "costUsdMicros": parsed.cost_usd_micros,
+        "inputTokens": parsed.input_tokens,
+        "outputTokens": parsed.output_tokens,
+        "turns": parsed.turns,
+        "inputs": json!({
+            "transcriptBytes": stream.len(),
+            "transcriptTruncated": truncated,
+            "unparsedLines": parsed.unparsed_lines,
+        }),
+        "result": parsed.result_json(),
+        "finalMessage": final_message,
+        "transcriptAttachmentId": transcript_attachment_id,
+        "steps": steps,
+    });
+    client.post("/api/agent/v1/runs", body)
+}
+
+fn upload_trace(client: &ApiClient, stream: &str) -> Result<Value> {
+    let redacted = stream
+        .lines()
+        .map(redact_line)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let uploaded = upload_media(
+        client,
+        redacted.into_bytes(),
+        "agent-transcript.jsonl",
+        TRACE_MIME_TYPE,
+    )?;
+    Ok(uploaded.get("attachmentId").cloned().unwrap_or(Value::Null))
+}
+
+fn redact_line(line: &str) -> String {
+    if let Ok(mut value) = serde_json::from_str::<Value>(line) {
+        redact_trace_value(&mut value);
+        return serde_json::to_string(&value).unwrap_or_else(|_| line.to_string());
+    }
+    redact_secrets(line)
+}
+
+/// Manifest redaction replaces only the needle, which leaves the token body
+/// sitting in raw tool output.
+fn redact_trace_value(value: &mut Value) {
+    match value {
+        Value::String(text) => *text = redact_secrets(text),
+        Value::Array(items) => items.iter_mut().for_each(redact_trace_value),
+        Value::Object(map) => map.values_mut().for_each(redact_trace_value),
+        _ => {}
+    }
+}
+
+fn redact_secrets(text: &str) -> String {
+    // split_inclusive leaves at most one whitespace character on each chunk, so
+    // rejoining the redacted chunks restores the original spacing
+    text.split_inclusive(char::is_whitespace)
+        .map(redact_word)
+        .collect()
+}
+
+fn redact_word(word: &str) -> String {
+    let mut redacted = word.to_string();
+    for rule in REDACTION_RULES {
+        let mut from = 0;
+        while let Some(offset) = redacted[from..].find(rule.needle) {
+            let start = from + offset;
+            let tail = &redacted[start + rule.needle.len()..];
+            let end = tail
+                .find(|character: char| {
+                    !(character.is_ascii_alphanumeric()
+                        || matches!(character, '_' | '-' | '.' | '+' | '/' | '='))
+                })
+                .unwrap_or(tail.len());
+            // a sentence-ending period is not part of the token
+            let end = tail[..end].trim_end_matches('.').len();
+            redacted.replace_range(start..start + rule.needle.len() + end, rule.replacement);
+            from = start + rule.replacement.len();
+        }
+    }
+    if looks_like_generic_secret(&redacted) {
+        let trailing: String = redacted
+            .chars()
+            .rev()
+            .take_while(|character| character.is_whitespace())
+            .collect();
+        return format!("[REDACTED:high-entropy]{trailing}");
+    }
+    redacted
+}
+
+/// A record cut mid-line no longer parses.
+fn clamp_to_line_boundary(raw: &str, limit: usize) -> (&str, bool) {
+    if raw.len() <= limit {
+        return (raw, false);
+    }
+    let end = raw[..limit].rfind('\n').unwrap_or(0);
+    (&raw[..end], true)
+}
+
+fn trace_trigger(options: &TraceOptions) -> &'static str {
+    if let Some(trigger) = options.trace_trigger {
+        return trigger.as_str();
+    }
+    if env::var_os("GITHUB_ACTIONS").is_some() || env::var_os("CI").is_some() {
+        "ci"
+    } else {
+        "local"
+    }
+}
+
+fn urlencode(value: &str) -> String {
+    value
+        .bytes()
+        .map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (byte as char).to_string()
+            }
+            _ => format!("%{byte:02X}"),
+        })
+        .collect()
 }
 
 fn review_pr(client: &ApiClient, args: ReviewPrArgs) -> Result<Value> {
@@ -3413,6 +3795,68 @@ mod tests {
         // A sweep reading this cannot tell the PR was reviewed, so it dispatches again.
         let bare = sticky_comment_body(marker, None, "https://sieve.fedi.xyz/r/1");
         assert!(!bare.contains("sieve-head:"));
+    }
+
+    #[test]
+    fn trace_redaction_takes_the_whole_token_not_just_its_prefix() {
+        let redacted = redact_secrets("curl -H 'Bearer sieve_livetoken123' https://x");
+        assert!(!redacted.contains("livetoken123"));
+        assert!(redacted.contains("[REDACTED:sieve-token]"));
+        assert!(redacted.contains("https://x"));
+    }
+
+    #[test]
+    fn trace_redaction_keeps_a_sentence_readable() {
+        let redacted = redact_secrets("I used ghp_abc123 to authenticate.");
+        assert_eq!(redacted, "I used [REDACTED:github-token] to authenticate.");
+    }
+
+    #[test]
+    fn trace_redaction_drops_only_the_high_entropy_word() {
+        let secret = "aB3".repeat(20);
+        let redacted = redact_secrets(&format!("the tool returned {secret} and exited"));
+        assert!(!redacted.contains(&secret));
+        assert!(redacted.starts_with("the tool returned "));
+        assert!(redacted.ends_with(" and exited"));
+    }
+
+    #[test]
+    fn trace_redaction_walks_nested_values() {
+        let mut value = json!({
+            "steps": [{ "argument": "token sieve_deadbeef00 here" }],
+        });
+        redact_trace_value(&mut value);
+        let argument = value
+            .pointer("/steps/0/argument")
+            .unwrap()
+            .as_str()
+            .unwrap();
+        assert!(!argument.contains("deadbeef00"));
+    }
+
+    #[test]
+    fn a_clean_line_survives_redaction_unchanged() {
+        let line = "{\"type\":\"assistant\",\"text\":\"reading the diff\"}";
+        let redacted: Value = serde_json::from_str(&redact_line(line)).unwrap();
+        assert_eq!(redacted, serde_json::from_str::<Value>(line).unwrap());
+    }
+
+    #[test]
+    fn a_line_that_is_not_json_still_gets_redacted() {
+        let redacted = redact_line("warning: token ghp_abc123 in the log");
+        assert!(!redacted.contains("abc123"));
+        assert!(redacted.starts_with("warning: token "));
+    }
+
+    #[test]
+    fn a_trace_is_clamped_on_a_line_boundary() {
+        let raw = "aaaa\nbbbb\ncccc\n";
+        let (clamped, truncated) = clamp_to_line_boundary(raw, 7);
+        assert_eq!(clamped, "aaaa");
+        assert!(truncated);
+        let (whole, untouched) = clamp_to_line_boundary(raw, 100);
+        assert_eq!(whole, raw);
+        assert!(!untouched);
     }
 
     #[test]
