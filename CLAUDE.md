@@ -1,5 +1,6 @@
 # Repository Guidance
 
+- To answer why a published review concluded what it did, read `docs/auditing.md` first. Run records answer it through the API, and a GitHub Actions log is the fallback only for reviews published before run records existed.
 - Do not write machine-local absolute paths into committed docs or instructions. Use repo-relative paths, environment variables such as `$SIEVE_CHECKOUT`, or `/path/to/...` placeholders.
 - Keep agent handoff plans and scratch planning notes out of the publishable tree. Use the ignored local `plans/` directory for that material.
 - Run `pnpm check` before committing application changes.

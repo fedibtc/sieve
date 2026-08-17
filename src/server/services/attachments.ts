@@ -15,11 +15,13 @@ import {
 export const MAX_ATTACHMENT_BYTES = 2_000_000;
 export const MAX_DIRECT_ATTACHMENT_BYTES = 250_000_000;
 export const PATCH_MIME_TYPE = "text/x-patch";
+export const TRANSCRIPT_MIME_TYPE = "application/x-ndjson";
 export const SUPPORTED_ATTACHMENT_TYPES = [
   "image/png",
   "video/webm",
   "video/mp4",
   PATCH_MIME_TYPE,
+  TRANSCRIPT_MIME_TYPE,
 ] as const;
 
 const ATTACHMENT_EXTENSIONS: Record<SupportedAttachmentType, string> = {
@@ -27,6 +29,7 @@ const ATTACHMENT_EXTENSIONS: Record<SupportedAttachmentType, string> = {
   "video/webm": "webm",
   "video/mp4": "mp4",
   [PATCH_MIME_TYPE]: "patch",
+  [TRANSCRIPT_MIME_TYPE]: "jsonl",
 };
 
 const PNG_SIGNATURE = Buffer.from([
@@ -372,7 +375,9 @@ function validateAttachmentReservation(input: {
       input.mimeType as SupportedAttachmentType,
     )
   ) {
-    throw new Error("Only PNG, WebM, MP4, and patch attachments are supported");
+    throw new Error(
+      "Only PNG, WebM, MP4, patch, and agent transcript attachments are supported",
+    );
   }
   if (
     !Number.isInteger(input.bytes) ||

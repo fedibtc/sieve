@@ -10,8 +10,13 @@ import { POST as addComment } from "./reviews/[id]/comments/route";
 import { POST as consumeFeedback } from "./reviews/[id]/feedback/consume/route";
 import { GET as getFeedback } from "./reviews/[id]/feedback/route";
 import { GET as getReview } from "./reviews/[id]/route";
+import { GET as listRunsForReview } from "./reviews/[id]/runs/route";
 import { POST as updateStatus } from "./reviews/[id]/status/route";
+import { GET as getVersion } from "./reviews/[id]/versions/[version]/route";
+import { GET as listVersions } from "./reviews/[id]/versions/route";
 import { GET as listReviews, POST as publishReview } from "./reviews/route";
+import { GET as getRun } from "./runs/[id]/route";
+import { POST as recordRun } from "./runs/route";
 import { POST as endSession } from "./sessions/[id]/end/route";
 import { POST as registerSession } from "./sessions/route";
 import { GET as whoami } from "./whoami/route";
@@ -218,6 +223,109 @@ describe("agent REST routes", () => {
     expect((await ended.json()).session.status).toBe("ended");
   });
 
+  it("records a run against a published version and reads both back", async () => {
+    const published = await publishReview(
+      agentRequest("/reviews", {
+        method: "POST",
+        body: JSON.stringify(reviewPayload()),
+      }),
+    );
+    const { review } = await published.json();
+
+    const recorded = await recordRun(
+      agentRequest("/runs", {
+        method: "POST",
+        body: JSON.stringify(runPayload(review.id)),
+      }),
+    );
+    expect(recorded.status).toBe(200);
+    const { run } = await recorded.json();
+    expect(run.stepCount).toBe(3);
+
+    const fetched = await getRun(agentRequest(`/runs/${run.id}`), {
+      params: Promise.resolve({ id: run.id }),
+    });
+    expect(fetched.status).toBe(200);
+    const detail = (await fetched.json()).run;
+    expect(detail.model).toBe("claude-opus-5");
+    expect(detail.steps.map((step: { name: string }) => step.name)).toEqual([
+      "Read",
+      "Bash",
+      null,
+    ]);
+    expect(detail.finalMessage).toContain("Prior feedback honored");
+
+    const forReview = await listRunsForReview(
+      agentRequest(`/reviews/${review.id}/runs`),
+      { params: Promise.resolve({ id: review.id }) },
+    );
+    expect((await forReview.json()).runs).toHaveLength(1);
+
+    const versions = await listVersions(
+      agentRequest(`/reviews/${review.id}/versions`),
+      { params: Promise.resolve({ id: review.id }) },
+    );
+    expect(versions.status).toBe(200);
+    expect((await versions.json()).versions).toHaveLength(1);
+
+    const version = await getVersion(
+      agentRequest(`/reviews/${review.id}/versions/1`),
+      { params: Promise.resolve({ id: review.id, version: "1" }) },
+    );
+    expect(version.status).toBe(200);
+    const versionBody = await version.json();
+    expect(versionBody.version.content.blocks).toHaveLength(1);
+    expect(versionBody.run.id).toBe(run.id);
+  });
+
+  it("replaces the run when the same version is recorded twice", async () => {
+    const published = await publishReview(
+      agentRequest("/reviews", {
+        method: "POST",
+        body: JSON.stringify(reviewPayload()),
+      }),
+    );
+    const { review } = await published.json();
+
+    await recordRun(
+      agentRequest("/runs", {
+        method: "POST",
+        body: JSON.stringify(runPayload(review.id)),
+      }),
+    );
+    const second = await recordRun(
+      agentRequest("/runs", {
+        method: "POST",
+        body: JSON.stringify({
+          ...runPayload(review.id),
+          model: "claude-sonnet-5",
+          steps: [{ kind: "tool", name: "Grep", target: "severity" }],
+        }),
+      }),
+    );
+    expect(second.status).toBe(200);
+
+    const listed = await listRunsForReview(
+      agentRequest(`/reviews/${review.id}/runs`),
+      { params: Promise.resolve({ id: review.id }) },
+    );
+    const runs = (await listed.json()).runs;
+    expect(runs).toHaveLength(1);
+    expect(runs[0].model).toBe("claude-sonnet-5");
+    expect(runs[0].stepCount).toBe(1);
+  });
+
+  it("rejects a run that names a review which does not exist", async () => {
+    const response = await recordRun(
+      agentRequest("/runs", {
+        method: "POST",
+        body: JSON.stringify(runPayload("missing-review")),
+      }),
+    );
+
+    expect(response.status).toBe(404);
+  });
+
   it("returns JSON validation errors", async () => {
     const response = await publishReview(
       agentRequest("/reviews", {
@@ -277,6 +385,35 @@ function agentRequest(path: string, init?: RequestInit) {
       ...init?.headers,
     },
   });
+}
+
+function runPayload(reviewId: string) {
+  return {
+    reviewId,
+    contentVersion: 1,
+    outcome: "published",
+    repo: "fedibtc/credential-app",
+    branch: "codex/demo",
+    trigger: "ci",
+    model: "claude-opus-5",
+    promptPath: "scripts/ci/sieve-hub-agent-review.md",
+    promptSha256: "a".repeat(64),
+    durationMs: 421_000,
+    turns: 44,
+    inputs: { screenshots: 11, priorFeedbackThreads: 1 },
+    result: { recommendation: "cannot-judge-alone", blocking: 0 },
+    finalMessage: "Prior feedback honored: the answer said ship as is.",
+    steps: [
+      { kind: "tool", name: "Read", target: "sieve-recap.json" },
+      {
+        kind: "tool",
+        name: "Bash",
+        target: "git diff origin/master...HEAD",
+        resultBytes: 18_204,
+      },
+      { kind: "text", text: "Now I'll write the review manifest." },
+    ],
+  };
 }
 
 function reviewPayload() {

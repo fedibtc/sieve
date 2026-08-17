@@ -164,6 +164,28 @@ After fixing actionable feedback:
 
 Never approve a review as an agent. Approval is human-only.
 
+## Auditing How A Review Was Constructed
+
+When the question is why a review concluded what it did, read the run behind it rather than a CI log:
+
+```bash
+sieve versions <reviewId>                       # every published version
+sieve versions <reviewId> --version <n>         # that version's content, plus its run
+sieve run get <runId>                           # ordered steps, tokens, closing message
+sieve run list --repo <owner/repo> --limit 20   # sweep the corpus
+```
+
+`finalMessage` on a run is where the agent stated what it graded and why, so read it first. A review published before run records existed has none, and for those only, fall back to the publishing job's CI log.
+
+Record the run when you publish, so the next auditor does not hit that gap:
+
+```bash
+sieve publish --manifest sieve-recap.json --redact \
+  --trace <agent-stream-json-transcript> --trace-prompt <prompt-file>
+```
+
+A run that died before publishing is the one worth keeping most, and publish cannot store it. Use `sieve run record --trace <transcript> --outcome failed`.
+
 ## Grounding Rules
 
 - Review content must be derived from the current worktree, git diff, and validation commands.

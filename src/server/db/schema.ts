@@ -49,6 +49,21 @@ export const agentSessionStatus = pgEnum("agent_session_status", [
   "active",
   "ended",
 ]);
+export const reviewRunOutcome = pgEnum("review_run_outcome", [
+  "published",
+  "authored_only",
+  "failed",
+]);
+export const reviewRunTrigger = pgEnum("review_run_trigger", [
+  "ci",
+  "local",
+  "unknown",
+]);
+export const reviewRunStepKind = pgEnum("review_run_step_kind", [
+  "tool",
+  "text",
+  "result",
+]);
 
 export const user = pgTable("user", {
   id: text("id").primaryKey(),
@@ -355,6 +370,81 @@ export const agentSessions = pgTable(
   ],
 );
 
+export const reviewRuns = pgTable(
+  "review_runs",
+  {
+    id: text("id").primaryKey().$defaultFn(id),
+    reviewId: text("review_id").references(() => reviews.id, {
+      onDelete: "cascade",
+    }),
+    contentVersion: integer("content_version"),
+    outcome: reviewRunOutcome("outcome").notNull(),
+    repo: text("repo").notNull(),
+    branch: text("branch").notNull(),
+    headSha: text("head_sha"),
+    prNumber: integer("pr_number"),
+    trigger: reviewRunTrigger("trigger").notNull().default("unknown"),
+    model: text("model"),
+    promptPath: text("prompt_path"),
+    promptSha256: text("prompt_sha256"),
+    toolVersion: text("tool_version"),
+    agentVersion: text("agent_version"),
+    agentSessionRef: text("agent_session_ref"),
+    hostname: text("hostname"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    durationMs: integer("duration_ms"),
+    costUsdMicros: integer("cost_usd_micros"),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    turns: integer("turns"),
+    stepCount: integer("step_count").notNull().default(0),
+    inputs: jsonb("inputs").notNull().default(sql`'{}'::jsonb`),
+    result: jsonb("result").notNull().default(sql`'{}'::jsonb`),
+    finalMessage: text("final_message"),
+    transcriptAttachmentId: text("transcript_attachment_id").references(
+      () => attachments.id,
+    ),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => user.id),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("review_runs_review_version_idx").on(
+      table.reviewId,
+      table.contentVersion,
+    ),
+    index("review_runs_repo_branch_idx").on(table.repo, table.branch),
+    index("review_runs_created_at_idx").on(table.createdAt),
+  ],
+);
+
+export const reviewRunSteps = pgTable(
+  "review_run_steps",
+  {
+    runId: text("run_id")
+      .notNull()
+      .references(() => reviewRuns.id, { onDelete: "cascade" }),
+    ordinal: integer("ordinal").notNull(),
+    kind: reviewRunStepKind("kind").notNull(),
+    name: text("name"),
+    target: text("target"),
+    argument: text("argument"),
+    resultBytes: integer("result_bytes"),
+    isError: boolean("is_error").notNull().default(false),
+    text: text("text"),
+    at: timestamp("at", { withTimezone: true }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.runId, table.ordinal] }),
+    index("review_run_steps_name_idx").on(table.name),
+    index("review_run_steps_kind_idx").on(table.kind),
+  ],
+);
+
 export const userRelations = relations(user, ({ many }) => ({
   sessions: many(session),
   accounts: many(account),
@@ -370,6 +460,26 @@ export const reviewRelations = relations(reviews, ({ one, many }) => ({
   versions: many(reviewVersions),
   comments: many(comments),
   events: many(events),
+  runs: many(reviewRuns),
+}));
+
+export const reviewRunRelations = relations(reviewRuns, ({ one, many }) => ({
+  review: one(reviews, {
+    fields: [reviewRuns.reviewId],
+    references: [reviews.id],
+  }),
+  transcript: one(attachments, {
+    fields: [reviewRuns.transcriptAttachmentId],
+    references: [attachments.id],
+  }),
+  steps: many(reviewRunSteps),
+}));
+
+export const reviewRunStepRelations = relations(reviewRunSteps, ({ one }) => ({
+  run: one(reviewRuns, {
+    fields: [reviewRunSteps.runId],
+    references: [reviewRuns.id],
+  }),
 }));
 
 export const attachmentRelations = relations(attachments, ({ one }) => ({
