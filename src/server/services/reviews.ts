@@ -53,6 +53,35 @@ export async function getReview(reviewId: string) {
   return review ?? null;
 }
 
+export async function listReviewVersions(reviewId: string) {
+  const db = await getDb();
+  return db
+    .select({
+      version: reviewVersions.version,
+      changeNote: reviewVersions.changeNote,
+      createdBy: reviewVersions.createdBy,
+      createdAt: reviewVersions.createdAt,
+    })
+    .from(reviewVersions)
+    .where(eq(reviewVersions.reviewId, reviewId))
+    .orderBy(desc(reviewVersions.version));
+}
+
+export async function getReviewVersion(reviewId: string, version: number) {
+  const db = await getDb();
+  const [row] = await db
+    .select()
+    .from(reviewVersions)
+    .where(
+      and(
+        eq(reviewVersions.reviewId, reviewId),
+        eq(reviewVersions.version, version),
+      ),
+    )
+    .limit(1);
+  return row ?? null;
+}
+
 export async function upsertReview(input: {
   id?: string;
   title: string;
