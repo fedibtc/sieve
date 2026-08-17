@@ -57,6 +57,13 @@
       "when": 1785437097190,
       "tag": "0007_great_strong_guy",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1786969364476,
+      "tag": "0008_polite_millenium_guard",
+      "breakpoints": true
     }
   ]
 }
