@@ -140,6 +140,11 @@ struct ReviewPrArgs {
     /// author can turn the recap into a claim and publish it themselves.
     #[arg(long)]
     manifest_out: Option<PathBuf>,
+    /// Diff against this commit instead of the base branch's tip. A PR that
+    /// merged as a merge commit has its head in the base branch's history,
+    /// so the tip diffs to nothing; pass the commit it was built on.
+    #[arg(long)]
+    base: Option<String>,
 }
 
 #[derive(Args, Clone, Default)]
@@ -1213,11 +1218,17 @@ fn review_pr(client: &ApiClient, args: ReviewPrArgs) -> Result<Value> {
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("pull request has no base branch"))?
         .to_string();
-    // CI checkouts fetch only the head branch, so origin/<base> does not
-    // exist locally and the scaffold diff would fail without this.
-    git(["fetch", "--no-tags", "origin", &base_ref])?;
+    let base = match args.base {
+        Some(base) => base,
+        None => {
+            // CI checkouts fetch only the head branch, so origin/<base> does
+            // not exist locally and the scaffold diff would fail without this.
+            git(["fetch", "--no-tags", "origin", &base_ref])?;
+            format!("origin/{base_ref}")
+        }
+    };
     let mut manifest = scaffold(ScaffoldArgs {
-        base: format!("origin/{base_ref}"),
+        base: base.clone(),
         head: "HEAD".to_string(),
         output: None,
     })?;
@@ -1228,13 +1239,13 @@ fn review_pr(client: &ApiClient, args: ReviewPrArgs) -> Result<Value> {
         }));
     }
     enrich_scaffold(&mut manifest, pr_number, &pr_title, &pr_url, &base_ref);
-    attach_full_patches(client, &mut manifest, &format!("origin/{base_ref}"), "HEAD")?;
+    attach_full_patches(client, &mut manifest, &base, "HEAD")?;
     if let Some(path) = args.manifest_out {
         fs::write(&path, serde_json::to_string_pretty(&manifest)?)?;
         return Ok(json!({
             "manifest": path,
             "prNumber": pr_number,
-            "baseRef": format!("origin/{base_ref}"),
+            "baseRef": base,
         }));
     }
     // An unattended publish cannot stop to triage redaction findings the way
