@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { ColorModeSelect } from "@/components/color-mode";
 import type { ReviewAnchor } from "@/shared/anchors";
 import { galleryEntries } from "@/shared/gallery";
 import { BlocksList, type Thread } from "./review-detail";
@@ -92,18 +93,18 @@ export function BlockGallery() {
   }
 
   return (
-    <main className="min-h-screen bg-background text-foreground">
-      <header className="sticky top-0 z-40 h-12 border-b bg-card/95 backdrop-blur">
+    <main className="min-h-screen bg-canvas text-fg">
+      <header className="sticky top-0 z-40 h-12 border-b bg-page-header">
         <div className="mx-auto flex h-full w-full max-w-[1600px] items-center gap-3 px-6">
-          <h1 className="text-lg font-semibold tracking-tight">
-            Block gallery
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Local demo of review blocks — no review or database required.
+          <h1 className="text-sm font-semibold">Block gallery</h1>
+          <p className="text-sm text-fg-muted">
+            Local demo of review blocks, no review or database required.
           </p>
+          <span className="flex-1" />
+          <ColorModeSelect />
         </div>
       </header>
-      <div className="mx-auto grid w-full max-w-[1600px] grid-cols-1 gap-8 px-6 py-8 lg:grid-cols-[220px_minmax(0,1fr)_300px]">
+      <div className="mx-auto grid w-full max-w-[1600px] grid-cols-1 gap-8 px-8 py-6 lg:grid-cols-[220px_minmax(0,1fr)_300px]">
         <nav
           aria-label="Gallery entries"
           className="self-start lg:sticky lg:top-20"
@@ -113,10 +114,10 @@ export function BlockGallery() {
               <li key={item.slug}>
                 <button
                   aria-current={item.slug === entry.slug ? "page" : undefined}
-                  className={`w-full rounded-md px-3 py-1.5 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                  className={`relative w-full cursor-pointer rounded-md px-3 py-1.5 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                     item.slug === entry.slug
-                      ? "bg-primary text-primary-foreground"
-                      : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                      ? "bg-control-selected font-semibold text-fg before:absolute before:-left-2 before:top-1.5 before:bottom-1.5 before:w-1 before:rounded-full before:bg-accent-emphasis"
+                      : "text-fg hover:bg-control-hover"
                   }`}
                   type="button"
                   onClick={() => selectEntry(item.slug)}
@@ -129,12 +130,8 @@ export function BlockGallery() {
         </nav>
         <section aria-label={entry.title} className="min-w-0 space-y-6">
           <div>
-            <h2 className="text-2xl font-semibold tracking-tight">
-              {entry.title}
-            </h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {entry.description}
-            </p>
+            <h2 className="text-2xl font-semibold">{entry.title}</h2>
+            <p className="mt-1 text-sm text-fg-muted">{entry.description}</p>
           </div>
           <div className="space-y-8" data-gallery-canvas>
             <BlocksList
@@ -151,8 +148,8 @@ export function BlockGallery() {
           aria-label="Emitted events"
           className="self-start lg:sticky lg:top-20"
         >
-          <div className="rounded-lg border bg-card shadow-sm">
-            <div className="border-b px-4 py-3 text-sm font-semibold">
+          <div className="rounded-md border bg-canvas">
+            <div className="rounded-t-md border-b bg-canvas-subtle px-3 py-2 text-sm font-semibold">
               Emitted events
             </div>
             <div
@@ -160,15 +157,15 @@ export function BlockGallery() {
               data-gallery-events
             >
               {events.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  Interact with the block — line numbers, file rows, and answer
+                <p className="text-sm text-fg-muted">
+                  Interact with the block: line numbers, file rows, and answer
                   buttons emit the anchors a review would post.
                 </p>
               ) : (
                 events.map((event) => (
                   <pre
                     key={event.id}
-                    className="overflow-x-auto rounded-md bg-muted/40 p-2 font-mono text-xs leading-5"
+                    className="overflow-x-auto rounded-md bg-canvas-subtle p-2 font-mono text-xs leading-5"
                   >
                     {`${event.kind}\n${JSON.stringify(event.payload, null, 2)}`}
                   </pre>

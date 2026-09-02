@@ -23,13 +23,11 @@ export default async function DeviceAuthorizationPage({
     record?.status === "pending" && record.expiresAt.getTime() > Date.now();
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-background px-6">
-      <section className="w-full max-w-lg rounded-xl border bg-card p-6 shadow-sm">
-        <p className="text-sm font-medium text-muted-foreground">sieve</p>
-        <h1 className="mt-2 text-2xl font-semibold tracking-tight">
-          Authorize sieve CLI
-        </h1>
-        <p className="mt-3 text-sm leading-6 text-muted-foreground">
+    <main className="flex min-h-screen flex-col items-center bg-canvas px-6 pt-16 text-fg">
+      <section className="w-full max-w-lg rounded-md border bg-canvas p-6">
+        <p className="text-sm font-semibold">sieve</p>
+        <h1 className="mt-2 text-2xl font-light">Authorize sieve CLI</h1>
+        <p className="mt-3 text-sm leading-6 text-fg-muted">
           Enter the code shown by <code>sieve login</code>, then approve only if
           you started the request.
         </p>
@@ -42,46 +40,46 @@ export default async function DeviceAuthorizationPage({
               defaultValue={params.user_code ?? ""}
               autoComplete="one-time-code"
               required
-              className="mt-2 h-11 w-full rounded-md border bg-background px-3 font-mono uppercase"
+              className="mt-2 h-8 w-full rounded-md border bg-canvas px-3 font-mono text-sm uppercase shadow-input outline-none focus-visible:border-focus focus-visible:ring-1 focus-visible:ring-focus"
             />
           </label>
           <button
             type="submit"
-            className="mt-7 h-11 rounded-md border bg-card px-4 text-sm font-medium hover:bg-accent"
+            className="mt-7 h-8 cursor-pointer rounded-md border border-btn-border bg-btn px-4 text-sm font-medium text-btn-fg shadow-btn hover:bg-btn-hover"
           >
             Continue
           </button>
         </form>
 
         {params.error ? (
-          <p className="mt-5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+          <p className="mt-5 rounded-md border border-danger-border bg-danger-muted px-3 py-2 text-sm">
             {params.error}
           </p>
         ) : null}
         {params.decision ? (
-          <p className="mt-5 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
+          <p className="mt-5 rounded-md border border-success-border bg-success-muted px-3 py-2 text-sm">
             Device request {params.decision}. You can return to the CLI.
           </p>
         ) : null}
         {params.user_code && !record && !params.error ? (
-          <p className="mt-5 text-sm text-red-700">
+          <p className="mt-5 text-sm text-danger-fg">
             The device code is invalid.
           </p>
         ) : null}
         {record ? (
-          <div className="mt-6 rounded-lg border p-4">
+          <div className="mt-6 rounded-md border bg-canvas-subtle p-4">
             <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
-              <dt className="text-muted-foreground">Client</dt>
+              <dt className="text-fg-muted">Client</dt>
               <dd>
                 {record.clientId === "sieve-cli"
                   ? "Sieve CLI"
                   : record.clientId}
               </dd>
-              <dt className="text-muted-foreground">Client ID</dt>
+              <dt className="text-fg-muted">Client ID</dt>
               <dd className="font-mono">{record.clientId}</dd>
-              <dt className="text-muted-foreground">Requested access</dt>
+              <dt className="text-fg-muted">Requested access</dt>
               <dd>{record.scope || "Default access"}</dd>
-              <dt className="text-muted-foreground">Code</dt>
+              <dt className="text-fg-muted">Code</dt>
               <dd className="font-mono">{params.user_code}</dd>
             </dl>
 
@@ -92,7 +90,7 @@ export default async function DeviceAuthorizationPage({
                   type="submit"
                   name="decision"
                   value="approved"
-                  className="h-11 flex-1 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground"
+                  className="h-8 flex-1 cursor-pointer rounded-md border border-btn-primary-border bg-btn-primary px-4 text-sm font-medium text-fg-on-emphasis hover:bg-btn-primary-hover"
                 >
                   Approve
                 </button>
@@ -100,7 +98,7 @@ export default async function DeviceAuthorizationPage({
                   type="submit"
                   name="decision"
                   value="denied"
-                  className="h-11 flex-1 rounded-md border bg-card px-4 text-sm font-medium hover:bg-accent"
+                  className="h-8 flex-1 cursor-pointer rounded-md border border-btn-border bg-btn px-4 text-sm font-medium text-btn-danger-fg shadow-btn hover:border-btn-danger-hover hover:bg-btn-danger-hover hover:text-fg-on-emphasis"
                 >
                   Deny
                 </button>

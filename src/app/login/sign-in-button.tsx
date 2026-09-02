@@ -23,7 +23,7 @@ async function signInWithGithub(callbackURL: string) {
 }
 
 const buttonClassName =
-  "inline-flex h-11 w-full items-center justify-center gap-3 rounded-md border bg-card px-4 text-sm font-medium transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+  "inline-flex h-8 w-full cursor-pointer items-center justify-center gap-2 rounded-md border border-btn-primary-border bg-btn-primary px-4 text-sm font-medium text-fg-on-emphasis transition-colors hover:bg-btn-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 export function GithubLoginButton({ callbackURL }: { callbackURL: string }) {
   return (
@@ -34,7 +34,7 @@ export function GithubLoginButton({ callbackURL }: { callbackURL: string }) {
     >
       <svg
         aria-hidden="true"
-        className="h-5 w-5"
+        className="h-4 w-4"
         viewBox="0 0 16 16"
         fill="currentColor"
       >
