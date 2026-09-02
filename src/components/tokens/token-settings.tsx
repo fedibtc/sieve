@@ -6,6 +6,7 @@ import { useMemo, useRef, useState } from "react";
 import { RelativeTime } from "@/components/relative-time";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { highlightCode } from "@/lib/highlight";
 
 type TokenSummary = {
   id: string;
@@ -222,7 +223,11 @@ export function TokenSettings({
               should use `sieve`.
             </p>
             <Snippet title="Claude Code MCP" value={connectSnippets.claude} />
-            <Snippet title="Codex MCP config" value={connectSnippets.codex} />
+            <Snippet
+              language="ini"
+              title="Codex MCP config"
+              value={connectSnippets.codex}
+            />
             <Snippet
               title="mcp-remote fallback"
               value={connectSnippets.remote}
@@ -238,10 +243,12 @@ function Snippet({
   title,
   value,
   icon,
+  language = "bash",
 }: {
   title: string;
   value: string;
   icon?: React.ReactNode;
+  language?: string;
 }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -270,7 +277,9 @@ function Snippet({
         </button>
       </div>
       <pre className="overflow-x-auto whitespace-pre-wrap p-3 font-mono text-xs leading-6">
-        <code>{value}</code>
+        <code className="syntax-highlight">
+          {highlightCode(value, language)}
+        </code>
       </pre>
     </div>
   );

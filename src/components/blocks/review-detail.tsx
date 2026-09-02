@@ -1,7 +1,6 @@
 "use client";
 
 import { diffLines } from "diff";
-import { common, createLowlight } from "lowlight";
 import {
   Bot,
   Check,
@@ -43,6 +42,13 @@ import remarkGfm from "remark-gfm";
 import { useColorScheme } from "@/components/color-mode";
 import { RelativeTime } from "@/components/relative-time";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
+import {
+  type HighlightLine,
+  highlightCode,
+  highlightCodeLines,
+  inferLanguageFromFilename,
+  renderHighlightLine,
+} from "@/lib/highlight";
 import { emphasizeRanges, intralineRanges } from "@/lib/intraline";
 import type { ReviewAnchor } from "@/shared/anchors";
 import type {
@@ -53,7 +59,6 @@ import type {
 } from "@/shared/blocks";
 import { Button } from "../ui/button";
 
-const lowlight = createLowlight(common);
 const DIFF_VIEW_MODE_STORAGE_KEY = "sieve:diff-view-mode";
 const SPLIT_DIFF_MIN_WIDTH = 760;
 
@@ -594,6 +599,16 @@ function markdownText(children: ReactNode): string {
   return "";
 }
 
+const PreContext = createContext(false);
+
+function MarkdownPre({ children }: { children?: ReactNode }) {
+  return (
+    <PreContext.Provider value={true}>
+      <pre>{children}</pre>
+    </PreContext.Provider>
+  );
+}
+
 function EvidenceCode({
   className,
   children,
@@ -603,9 +618,21 @@ function EvidenceCode({
   children?: ReactNode;
 }) {
   const links = useContext(EvidenceLinkContext);
-  const label = markdownText(children).trim();
-  // A className means a fenced block, which is a code sample rather than a reference.
-  const blockId = className ? undefined : links?.targets.get(label);
+  const inPre = useContext(PreContext);
+  const text = markdownText(children);
+  if (inPre) {
+    const language = /language-([\w+#-]+)/.exec(className ?? "")?.[1];
+    return (
+      <code
+        className={[className, "syntax-highlight"].filter(Boolean).join(" ")}
+        {...props}
+      >
+        {highlightCode(text.replace(/\n$/, ""), language)}
+      </code>
+    );
+  }
+  const label = text.trim();
+  const blockId = links?.targets.get(label);
 
   if (!links || !blockId) {
     return (
@@ -617,7 +644,7 @@ function EvidenceCode({
 
   return (
     <button
-      className="cursor-pointer rounded bg-canvas-subtle px-1 py-0.5 font-mono text-[0.85em] text-fg underline decoration-dotted underline-offset-2 transition-colors hover:bg-accent-muted hover:decoration-solid"
+      className="cursor-pointer rounded bg-canvas-subtle px-1 py-0.5 font-mono text-[0.85em] text-fg underline decoration-dotted underline-offset-2 transition-colors hover:bg-accent-muted hover:text-accent-fg hover:decoration-solid focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       type="button"
       title={evidenceLinkTitle(label)}
       onClick={() => links.onJump(blockId)}
@@ -627,7 +654,7 @@ function EvidenceCode({
   );
 }
 
-const markdownComponents = { code: EvidenceCode };
+const markdownComponents = { code: EvidenceCode, pre: MarkdownPre };
 
 function evidenceLinkTitle(label: string) {
   return `Jump to the evidence in ${label}`;
@@ -1927,13 +1954,19 @@ function FileTreeRow({
         ) : null}
       </div>
       {expanded && entry.patch ? (
-        <PatchPanel attachmentId={entry.patch.attachmentId} />
+        <PatchPanel attachmentId={entry.patch.attachmentId} path={entry.path} />
       ) : null}
     </div>
   );
 }
 
-function PatchPanel({ attachmentId }: { attachmentId: string }) {
+function PatchPanel({
+  attachmentId,
+  path,
+}: {
+  attachmentId: string;
+  path: string;
+}) {
   const [patch, setPatch] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -1961,6 +1994,17 @@ function PatchPanel({ attachmentId }: { attachmentId: string }) {
     };
   }, [attachmentId]);
 
+  const rows = useMemo(
+    () =>
+      patch === null
+        ? []
+        : highlightPatchRows(
+            parsePatch(patch),
+            inferLanguageFromFilename(path),
+          ),
+    [patch, path],
+  );
+
   if (error) {
     return (
       <div className="border-t bg-canvas-subtle px-3 py-2 text-xs text-danger-fg">
@@ -1976,43 +2020,142 @@ function PatchPanel({ attachmentId }: { attachmentId: string }) {
     );
   }
   return (
-    <pre className="max-h-96 overflow-auto border-t bg-canvas-subtle px-3 py-2 font-mono text-xs leading-5">
-      {patch.split("\n").map((line, index) => (
-        <div
-          // biome-ignore lint/suspicious/noArrayIndexKey: patch lines are static once fetched
-          key={index}
-          className={patchLineClass(line)}
-        >
-          {line || " "}
-        </div>
-      ))}
-    </pre>
+    <div className="max-h-96 overflow-auto border-t font-mono text-xs leading-5">
+      {rows.map((row) => {
+        if (row.kind === "hunk") {
+          return (
+            <div
+              key={row.id}
+              className="grid min-w-[560px] grid-cols-[64px_minmax(0,1fr)]"
+            >
+              <span className="bg-diff-hunk-num" />
+              <span className="bg-diff-hunk-line px-3 py-1 text-fg-muted">
+                {row.text}
+              </span>
+            </div>
+          );
+        }
+        if (row.kind === "meta") {
+          return (
+            <div key={row.id} className="px-3 text-fg-muted">
+              {row.text || " "}
+            </div>
+          );
+        }
+        return (
+          <div
+            key={row.id}
+            className="grid min-w-[560px] grid-cols-[64px_minmax(0,1fr)]"
+          >
+            <span
+              className={`px-2 text-right tabular-nums ${
+                row.kind === "add"
+                  ? "bg-diff-add-num text-fg"
+                  : row.kind === "remove"
+                    ? "bg-diff-del-num text-fg"
+                    : "text-fg-muted"
+              }`}
+            >
+              {row.line}
+            </span>
+            <CodeCell
+              tokens={row.tokens}
+              tone={row.kind}
+              sign={
+                row.kind === "add" ? "+" : row.kind === "remove" ? "-" : " "
+              }
+              value={row.text}
+            />
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
-function patchLineClass(line: string) {
-  if (line.startsWith("+++") || line.startsWith("---")) {
-    return "text-fg-muted";
+type PatchRow = { id: number } & (
+  | { kind: "hunk"; text: string }
+  | { kind: "meta"; text: string }
+  | {
+      kind: "context" | "add" | "remove";
+      text: string;
+      line: number;
+      tokens?: HighlightLine;
+    }
+);
+
+function parsePatch(patch: string): PatchRow[] {
+  const rows: PatchRow[] = [];
+  let oldLine = 0;
+  let newLine = 0;
+  let inHunk = false;
+  for (const [id, raw] of patch.split("\n").entries()) {
+    const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(raw);
+    if (hunk) {
+      oldLine = Number(hunk[1]);
+      newLine = Number(hunk[2]);
+      inHunk = true;
+      rows.push({ id, kind: "hunk", text: raw });
+      continue;
+    }
+    if (raw.startsWith("diff --git")) {
+      inHunk = false;
+    }
+    if (inHunk && raw.startsWith("+")) {
+      rows.push({ id, kind: "add", text: raw.slice(1), line: newLine });
+      newLine += 1;
+      continue;
+    }
+    if (inHunk && raw.startsWith("-")) {
+      rows.push({ id, kind: "remove", text: raw.slice(1), line: oldLine });
+      oldLine += 1;
+      continue;
+    }
+    if (inHunk && (raw.startsWith(" ") || raw === "")) {
+      rows.push({ id, kind: "context", text: raw.slice(1), line: newLine });
+      oldLine += 1;
+      newLine += 1;
+      continue;
+    }
+    rows.push({ id, kind: "meta", text: raw });
   }
-  if (line.startsWith("@@")) {
-    return "text-accent-fg";
+  // the trailing newline of the file is not a context line
+  const last = rows[rows.length - 1];
+  if (last?.kind === "context" && last.text === "") {
+    rows.pop();
   }
-  if (line.startsWith("+")) {
-    return "bg-success-muted text-success-fg";
-  }
-  if (line.startsWith("-")) {
-    return "bg-danger-muted text-danger-fg";
-  }
-  if (
-    line.startsWith("diff --git") ||
-    line.startsWith("index ") ||
-    line.startsWith("new file") ||
-    line.startsWith("deleted file") ||
-    line.startsWith("rename ")
-  ) {
-    return "text-fg-muted";
-  }
-  return "";
+  return rows;
+}
+
+// each side is highlighted as one document so tokens keep their context
+function highlightPatchRows(rows: PatchRow[], language?: string): PatchRow[] {
+  const newSide = rows.filter(
+    (row) => row.kind === "context" || row.kind === "add",
+  );
+  const oldSide = rows.filter((row) => row.kind === "remove");
+  const newLines = highlightCodeLines(
+    newSide.map((row) => row.text).join("\n"),
+    language,
+  );
+  const oldLines = highlightCodeLines(
+    oldSide.map((row) => row.text).join("\n"),
+    language,
+  );
+  let newIndex = 0;
+  let oldIndex = 0;
+  return rows.map((row) => {
+    if (row.kind === "context" || row.kind === "add") {
+      const tokens = newLines[newIndex];
+      newIndex += 1;
+      return { ...row, tokens };
+    }
+    if (row.kind === "remove") {
+      const tokens = oldLines[oldIndex];
+      oldIndex += 1;
+      return { ...row, tokens };
+    }
+    return row;
+  });
 }
 
 function topLevelDirectory(path: string) {
@@ -3344,144 +3487,6 @@ function AnnotationCard({
       </div>
     </div>
   );
-}
-
-type HighlightToken = {
-  className?: string;
-  text: string;
-  emphasized?: boolean;
-};
-
-type HighlightLine = HighlightToken[];
-
-function highlightCode(value: string, language?: string) {
-  return renderHighlightLine(highlightCodeLine(value, language));
-}
-
-function highlightCodeLines(value: string, language?: string): HighlightLine[] {
-  const normalizedLanguage = normalizeHighlightLanguage(language);
-  try {
-    const tree = normalizedLanguage
-      ? lowlight.highlight(normalizedLanguage, value)
-      : { children: [{ type: "text", value }] };
-    const lines: HighlightLine[] = [[]];
-    for (const token of flattenLowlightNodes(tree.children)) {
-      const parts = token.text.split("\n");
-      for (const [index, part] of parts.entries()) {
-        if (index > 0) {
-          lines.push([]);
-        }
-        if (part) {
-          lines[lines.length - 1]?.push({ ...token, text: part });
-        }
-      }
-    }
-    return lines.length > 0 ? lines : [[]];
-  } catch {
-    return value.split("\n").map((text) => [{ text }]);
-  }
-}
-
-function highlightCodeLine(value: string, language?: string): HighlightLine {
-  const normalizedLanguage = normalizeHighlightLanguage(language);
-  try {
-    const tree = normalizedLanguage
-      ? lowlight.highlight(normalizedLanguage, value)
-      : lowlight.highlightAuto(value);
-    return flattenLowlightNodes(tree.children);
-  } catch {
-    return [{ text: value }];
-  }
-}
-
-type LowlightNode = {
-  type: string;
-  tagName?: string;
-  value?: string;
-  properties?: { className?: string[] };
-  children?: LowlightNode[];
-};
-
-function flattenLowlightNodes(
-  nodes: LowlightNode[] = [],
-  inheritedClassName?: string,
-): HighlightToken[] {
-  return nodes.flatMap((node) => {
-    if (node.type === "text") {
-      return [{ className: inheritedClassName, text: node.value ?? "" }];
-    }
-    const className = node.properties?.className?.join(" ");
-    return flattenLowlightNodes(
-      node.children,
-      [inheritedClassName, className].filter(Boolean).join(" ") || undefined,
-    );
-  });
-}
-
-function renderHighlightLine(
-  tokens: HighlightLine = [],
-  emphasisClass = "",
-): ReactNode[] {
-  return tokens.map((token, index) => {
-    const className = [token.className, token.emphasized ? emphasisClass : ""]
-      .filter(Boolean)
-      .join(" ");
-    if (!className && !token.emphasized) {
-      return token.text;
-    }
-    return (
-      <span
-        className={className || undefined}
-        data-diff-emphasis={token.emphasized ? "" : undefined}
-        // biome-ignore lint/suspicious/noArrayIndexKey: lowlight token spans are stateless render output.
-        key={`${className}:${index}`}
-      >
-        {token.text}
-      </span>
-    );
-  });
-}
-
-function normalizeHighlightLanguage(language?: string) {
-  const normalized = language?.toLowerCase();
-  if (!normalized) {
-    return undefined;
-  }
-  if (normalized === "ts" || normalized === "tsx") {
-    return "typescript";
-  }
-  if (normalized === "js" || normalized === "jsx") {
-    return "javascript";
-  }
-  if (normalized === "yml") {
-    return "yaml";
-  }
-  return normalized;
-}
-
-function inferLanguageFromFilename(filename: string, language?: string) {
-  if (language) {
-    return normalizeHighlightLanguage(language);
-  }
-  const extension = filename.split(".").pop()?.toLowerCase();
-  const map: Record<string, string> = {
-    cjs: "javascript",
-    css: "css",
-    html: "xml",
-    js: "javascript",
-    json: "json",
-    jsx: "javascript",
-    md: "markdown",
-    mjs: "javascript",
-    rs: "rust",
-    sh: "bash",
-    sql: "sql",
-    ts: "typescript",
-    tsx: "typescript",
-    yaml: "yaml",
-    yml: "yaml",
-  };
-  return extension ? map[extension] : undefined;
 }
 
 function lineInRange(line: number, range: string) {
