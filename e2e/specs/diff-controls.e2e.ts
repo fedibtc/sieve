@@ -47,7 +47,7 @@ test("unified is the default and split applies to every diff at once", async ({
   });
   await expect(unifiedButtons).toHaveCount(2);
   for (const button of await unifiedButtons.all()) {
-    await expect(button).toHaveClass(/bg-primary/);
+    await expect(button).toHaveAttribute("aria-pressed", "true");
   }
   expect(
     await page.evaluate(() => localStorage.getItem("sieve:diff-view-mode")),
@@ -60,7 +60,7 @@ test("unified is the default and split applies to every diff at once", async ({
   for (const button of await page
     .getByRole("button", { exact: true, name: "split" })
     .all()) {
-    await expect(button).toHaveClass(/bg-primary/);
+    await expect(button).toHaveAttribute("aria-pressed", "true");
   }
   expect(
     await page.evaluate(() => localStorage.getItem("sieve:diff-view-mode")),
@@ -72,7 +72,7 @@ test("unified is the default and split applies to every diff at once", async ({
     page
       .locator("article#diff-two")
       .getByRole("button", { exact: true, name: "split" }),
-  ).toHaveClass(/bg-primary/);
+  ).toHaveAttribute("aria-pressed", "true");
 
   // Another tab follows through the storage event.
   const second = await context.newPage();
@@ -91,7 +91,7 @@ test("unified is the default and split applies to every diff at once", async ({
     second
       .locator("article#diff-two")
       .getByRole("button", { exact: true, name: "unified" }),
-  ).toHaveClass(/bg-primary/);
+  ).toHaveAttribute("aria-pressed", "true");
 });
 
 test("gutter comment controls reveal on hover and set a line anchor", async ({

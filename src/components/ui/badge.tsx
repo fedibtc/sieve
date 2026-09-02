@@ -1,14 +1,15 @@
 import type * as React from "react";
 import { cn } from "@/lib/utils";
 
+// primer's Label: a 20px outlined pill whose border and text share one role color
 const toneClass = {
-  neutral: "border-border bg-card text-muted-foreground",
-  primary: "border-primary/20 bg-primary/10 text-primary",
-  blue: "border-blue-200 bg-blue-50 text-blue-700",
-  green: "border-emerald-200 bg-emerald-50 text-emerald-700",
-  amber: "border-amber-200 bg-amber-50 text-amber-700",
-  red: "border-red-200 bg-red-50 text-red-700",
-  violet: "border-violet-200 bg-violet-50 text-violet-700",
+  neutral: "border-border text-fg-muted",
+  primary: "border-accent-emphasis text-accent-fg",
+  blue: "border-accent-emphasis text-accent-fg",
+  green: "border-success-emphasis text-success-fg",
+  amber: "border-attention-emphasis text-attention-fg",
+  red: "border-danger-emphasis text-danger-fg",
+  violet: "border-done-emphasis text-done-fg",
 } as const;
 
 export type BadgeTone = keyof typeof toneClass;
@@ -21,8 +22,20 @@ export function Badge({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium leading-5",
+        "inline-flex h-5 items-center gap-1 whitespace-nowrap rounded-full border px-[7px] text-xs font-medium leading-[18px]",
         toneClass[tone],
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+export function Counter({ className, ...props }: React.ComponentProps<"span">) {
+  return (
+    <span
+      className={cn(
+        "inline-flex h-5 min-w-5 items-center justify-center gap-1 rounded-full bg-neutral-muted px-1.5 text-xs font-medium leading-[18px] text-fg-muted",
         className,
       )}
       {...props}

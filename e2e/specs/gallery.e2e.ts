@@ -53,8 +53,9 @@ test("gallery diff controls work without a review", async ({ page }) => {
   await page.goto("/gallery#diff-annotated");
   const diff = page.locator("article#gallery-diff-annotated");
   await diff.getByRole("button", { name: "unified" }).click();
-  await expect(diff.getByRole("button", { name: "unified" })).toHaveClass(
-    /bg-primary/,
+  await expect(diff.getByRole("button", { name: "unified" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
   );
   await diff.getByRole("button", { name: "split" }).click();
 

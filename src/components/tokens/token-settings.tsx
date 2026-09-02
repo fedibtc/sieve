@@ -93,27 +93,25 @@ export function TokenSettings({
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-8">
-      <header className="flex flex-col gap-2 border-b pb-6">
-        <div className="flex items-center gap-3">
-          <KeyRound className="h-7 w-7" />
-          <h1 className="text-3xl font-semibold tracking-tight">
-            Agent tokens
-          </h1>
-        </div>
-        <p className="max-w-2xl text-muted-foreground">
+    <main className="mx-auto flex w-full max-w-[1280px] flex-col gap-6 px-8 py-6">
+      <header className="flex flex-col gap-1 border-b pb-4">
+        <h1 className="flex items-center gap-2 text-2xl font-semibold">
+          <KeyRound className="h-6 w-6 text-fg-muted" />
+          Agent tokens
+        </h1>
+        <p className="max-w-2xl text-sm text-fg-muted">
           Mint bearer tokens for the sieve CLI. Tokens are shown once and expire
           after 90 days.
         </p>
       </header>
 
-      <section className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_360px]">
+      <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="flex flex-col gap-5">
           <div className="flex flex-wrap items-end gap-3">
-            <label className="flex min-w-72 flex-1 flex-col gap-2 font-medium text-sm">
+            <label className="flex min-w-72 flex-1 flex-col gap-2 font-semibold text-sm">
               Token name
               <input
-                className="h-10 rounded-md border bg-card px-3 font-normal text-base outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring"
+                className="h-8 rounded-md border bg-canvas px-3 font-normal text-sm shadow-input outline-none transition-colors focus-visible:border-focus focus-visible:ring-1 focus-visible:ring-focus"
                 value={name}
                 onChange={(event) => setName(event.target.value)}
               />
@@ -124,18 +122,18 @@ export function TokenSettings({
             </Button>
           </div>
 
-          {error ? <p className="text-destructive text-sm">{error}</p> : null}
+          {error ? <p className="text-danger-fg text-sm">{error}</p> : null}
 
           {createdToken ? (
             <div
               ref={calloutRef}
-              className="rounded-lg border border-amber-200 bg-amber-50 p-4"
+              className="rounded-md border border-attention-border bg-attention-muted p-4"
             >
-              <div className="mb-1 flex items-center gap-2 font-semibold text-amber-950">
-                <KeyRound className="h-4 w-4" />
+              <div className="mb-1 flex items-center gap-2 font-semibold">
+                <KeyRound className="h-4 w-4 text-attention-fg" />
                 Copy this token now
               </div>
-              <p className="mb-3 text-sm text-amber-800">
+              <p className="mb-3 text-sm text-fg-muted">
                 This is shown once. Store it in your shell environment or let
                 the CLI store a localhost token with `login --dev`.
               </p>
@@ -143,16 +141,16 @@ export function TokenSettings({
             </div>
           ) : null}
 
-          <div className="overflow-hidden rounded-lg border bg-card">
+          <div className="overflow-hidden rounded-md border bg-canvas">
             <table className="w-full border-collapse text-left text-sm">
-              <thead className="bg-muted/50 text-muted-foreground">
+              <thead className="bg-canvas-subtle text-fg-muted">
                 <tr>
-                  <th className="px-4 py-3 font-medium">Name</th>
-                  <th className="px-4 py-3 font-medium">Status</th>
-                  <th className="px-4 py-3 font-medium">Prefix</th>
-                  <th className="px-4 py-3 font-medium">Last used</th>
-                  <th className="px-4 py-3 font-medium">Expires</th>
-                  <th className="w-16 px-4 py-3" />
+                  <th className="px-4 py-2 font-semibold">Name</th>
+                  <th className="px-4 py-2 font-semibold">Status</th>
+                  <th className="px-4 py-2 font-semibold">Prefix</th>
+                  <th className="px-4 py-2 font-semibold">Last used</th>
+                  <th className="px-4 py-2 font-semibold">Expires</th>
+                  <th className="w-16 px-4 py-2" />
                 </tr>
               </thead>
               <tbody>
@@ -162,21 +160,21 @@ export function TokenSettings({
                     <td className="px-4 py-3">
                       <TokenStatus token={token} />
                     </td>
-                    <td className="px-4 py-3 font-mono text-muted-foreground">
+                    <td className="px-4 py-3 font-mono text-xs text-fg-muted">
                       {token.prefix ?? "sieve_"}
                       {token.start ?? ""}
                     </td>
-                    <td className="px-4 py-3 text-muted-foreground">
+                    <td className="px-4 py-3 text-fg-muted">
                       <RelativeTime value={token.lastRequest} />
                     </td>
-                    <td className="px-4 py-3 text-muted-foreground">
+                    <td className="px-4 py-3 text-fg-muted">
                       <RelativeTime value={token.expiresAt} />
                     </td>
                     <td className="px-4 py-3">
                       <button
                         aria-label="Revoke token"
                         title="Revoke token"
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-md border transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        className="inline-flex size-7 cursor-pointer items-center justify-center rounded-md border border-btn-border bg-btn text-btn-danger-fg shadow-btn transition-colors hover:border-btn-danger-hover hover:bg-btn-danger-hover hover:text-fg-on-emphasis focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         disabled={busy}
                         onClick={() => {
                           if (window.confirm("Revoke this token?")) {
@@ -193,7 +191,7 @@ export function TokenSettings({
                 {tokens.length === 0 ? (
                   <tr>
                     <td
-                      className="px-4 py-10 text-center text-muted-foreground"
+                      className="px-4 py-10 text-center text-fg-muted"
                       colSpan={6}
                     >
                       No tokens yet
@@ -217,7 +215,7 @@ export function TokenSettings({
             value={connectSnippets.cliEnv}
           />
           <div className="flex flex-col gap-3 border-t pt-4">
-            <p className="text-muted-foreground text-sm">
+            <p className="text-fg-muted text-sm">
               Deprecated MCP snippets are migration-only. New agent sessions
               should use `sieve`.
             </p>
@@ -245,16 +243,16 @@ function Snippet({
 }) {
   const [copied, setCopied] = useState(false);
   return (
-    <div className="overflow-hidden rounded-lg border bg-card">
-      <div className="flex items-center justify-between border-b px-3 py-2">
-        <h2 className="flex items-center gap-2 text-sm font-medium">
+    <div className="overflow-hidden rounded-md border bg-canvas">
+      <div className="flex items-center justify-between border-b bg-canvas-subtle px-3 py-2">
+        <h2 className="flex items-center gap-2 text-sm font-semibold">
           {icon}
           {title}
         </h2>
         <button
           aria-label={`Copy ${title}`}
           title={`Copy ${title}`}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="inline-flex size-7 cursor-pointer items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-control-hover hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onClick={() => {
             void navigator.clipboard.writeText(value);
             setCopied(true);
@@ -269,7 +267,7 @@ function Snippet({
           )}
         </button>
       </div>
-      <pre className="overflow-x-auto whitespace-pre-wrap p-3 font-mono text-xs leading-6">
+      <pre className="overflow-x-auto whitespace-pre-wrap p-3 font-mono text-xs leading-5">
         <code>{value}</code>
       </pre>
     </div>
@@ -279,14 +277,14 @@ function Snippet({
 function CopyRow({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
   return (
-    <div className="flex items-stretch rounded-md border border-amber-200 bg-card">
-      <code className="min-w-0 flex-1 overflow-x-auto px-3 py-2 font-mono text-sm">
+    <div className="flex items-stretch rounded-md border bg-canvas">
+      <code className="min-w-0 flex-1 overflow-x-auto px-3 py-2 font-mono text-xs leading-5">
         {value}
       </code>
       <button
         aria-label="Copy token"
         title="Copy token"
-        className="inline-flex w-11 items-center justify-center border-amber-200 border-l transition-colors hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="inline-flex w-9 cursor-pointer items-center justify-center border-l text-fg-muted transition-colors hover:bg-control-hover hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         onClick={() => {
           void navigator.clipboard.writeText(value);
           setCopied(true);
