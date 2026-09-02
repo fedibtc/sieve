@@ -81,9 +81,9 @@ export function ColorModeSelect() {
       value={mode}
       onChange={(event) => setMode(event.target.value as ColorMode)}
     >
-      <option value="auto">System theme</option>
-      <option value="light">Light theme</option>
-      <option value="dark">Dark theme</option>
+      <option value="auto">System</option>
+      <option value="light">Light</option>
+      <option value="dark">Dark</option>
     </select>
   );
 }
