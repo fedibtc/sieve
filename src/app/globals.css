@@ -223,6 +223,31 @@ html {
   scroll-behavior: smooth;
 }
 
+/* every control reads as clickable and eases between states */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  select:not(:disabled),
+  summary,
+  a[href] {
+    cursor: pointer;
+  }
+
+  button,
+  a,
+  select,
+  summary,
+  input,
+  textarea {
+    transition:
+      color 0.12s ease,
+      background-color 0.12s ease,
+      border-color 0.12s ease,
+      box-shadow 0.12s ease,
+      opacity 0.12s ease;
+  }
+}
+
 ::selection {
   background: light-dark(#0969da33, #1f6febb3);
 }
@@ -256,15 +281,11 @@ html {
 }
 
 .recap-prose h1 {
-  padding-bottom: 0.3em;
   font-size: 2em;
-  border-bottom: 1px solid var(--borderColor-muted);
 }
 
 .recap-prose h2 {
-  padding-bottom: 0.3em;
   font-size: 1.5em;
-  border-bottom: 1px solid var(--borderColor-muted);
 }
 
 .recap-prose h3 {
@@ -469,22 +490,4 @@ html {
   100% {
     background: transparent;
   }
-}
-
-/* github's add-line-comment button: hidden until its side of the row is
-   hovered, then it grows into place */
-.add-line-comment {
-  opacity: 0;
-  transform: scale(0.8);
-  transition:
-    opacity 0.1s ease-in-out,
-    transform 0.1s ease-in-out;
-}
-
-.diff-row:has([data-side="before"]:hover) [data-plus="before"],
-.diff-row:has([data-side="after"]:hover) [data-plus="after"],
-.diff-row[data-side="before"]:hover [data-plus="before"],
-.diff-row[data-side="after"]:hover [data-plus="after"] {
-  opacity: 1;
-  transform: scale(1);
 }

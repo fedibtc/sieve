@@ -3,29 +3,24 @@ import { cva, type VariantProps } from "class-variance-authority";
 import type * as React from "react";
 import { cn } from "@/lib/utils";
 
-// primer buttons: default is the green primary, outline the gray one
 const buttonVariants = cva(
-  "inline-flex cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-md border text-sm font-medium leading-5 transition-colors disabled:cursor-default disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-ring",
+  "inline-flex cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors disabled:cursor-default disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-ring",
   {
     variants: {
       variant: {
         default:
-          "border-btn-primary-border bg-btn-primary text-fg-on-emphasis hover:bg-btn-primary-hover",
+          "border border-btn-primary-border bg-btn-primary text-fg-on-emphasis hover:bg-btn-primary-hover",
         secondary:
-          "border-btn-border bg-btn text-btn-fg shadow-btn hover:bg-btn-hover active:bg-btn-active",
+          "border border-btn-border bg-btn text-btn-fg shadow-btn hover:bg-btn-hover",
+        ghost: "hover:bg-control-hover hover:text-fg",
         outline:
-          "border-btn-border bg-btn text-btn-fg shadow-btn hover:bg-btn-hover active:bg-btn-active",
-        danger:
-          "border-btn-border bg-btn text-btn-danger-fg shadow-btn hover:border-btn-danger-hover hover:bg-btn-danger-hover hover:text-fg-on-emphasis",
-        ghost:
-          "border-transparent text-fg hover:bg-control-hover [&_svg]:text-fg-muted",
+          "border border-btn-border bg-btn text-btn-fg shadow-btn hover:bg-btn-hover",
       },
       size: {
-        default: "h-8 px-4",
-        sm: "h-7 px-3 text-xs",
-        lg: "h-10 px-5",
-        icon: "size-8",
-        "icon-sm": "size-7",
+        default: "h-9 px-4 py-2",
+        sm: "h-8 rounded-md px-3",
+        lg: "h-10 rounded-md px-6",
+        icon: "size-9",
       },
     },
     defaultVariants: {

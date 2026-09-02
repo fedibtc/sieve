@@ -3,38 +3,30 @@
 import { diffLines } from "diff";
 import { common, createLowlight } from "lowlight";
 import {
-  Archive,
   Bot,
   Check,
   ChevronDown,
-  ChevronRight,
   ChevronsDownUp,
   ChevronsUpDown,
-  CircleCheck,
+  Code2,
   Database,
   ExternalLink,
-  FileDiff,
+  FileCode2,
   Folder,
+  GitBranch,
   GitCompareArrows,
-  GitPullRequestArrow,
   Image as ImageIcon,
-  Info,
   MessageSquare,
-  MessageSquareWarning,
-  OctagonAlert,
-  Plus,
   Radio,
   RotateCcw,
   Send,
   TableProperties,
-  TriangleAlert,
-  UnfoldVertical,
   Video,
   X,
 } from "lucide-react";
 import Image from "next/image";
+import Link from "next/link";
 import {
-  type CSSProperties,
   createContext,
   Fragment,
   type ReactNode,
@@ -50,7 +42,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useColorScheme } from "@/components/color-mode";
 import { RelativeTime } from "@/components/relative-time";
-import { Badge, type BadgeTone, Counter } from "@/components/ui/badge";
+import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { emphasizeRanges, intralineRanges } from "@/lib/intraline";
 import type { ReviewAnchor } from "@/shared/anchors";
 import type {
@@ -64,13 +56,6 @@ import { Button } from "../ui/button";
 const lowlight = createLowlight(common);
 const DIFF_VIEW_MODE_STORAGE_KEY = "sieve:diff-view-mode";
 const SPLIT_DIFF_MIN_WIDTH = 760;
-// github's diff grid: 50px gutters that widen with the line count, 20px rows
-const UNIFIED_ROW =
-  "grid min-w-[560px] grid-cols-[var(--diff-gutter)_var(--diff-gutter)_minmax(0,1fr)]";
-const SPLIT_ROW =
-  "grid min-w-[760px] grid-cols-[var(--diff-gutter)_minmax(0,1fr)_var(--diff-gutter)_minmax(0,1fr)]";
-const CODE_ROW =
-  "grid min-w-[560px] grid-cols-[var(--diff-gutter)_minmax(0,1fr)]";
 
 type Review = {
   id: string;
@@ -293,106 +278,99 @@ export function ReviewDetail({
   return (
     <main className="min-h-screen bg-canvas text-fg">
       <header className="border-b bg-canvas">
-        <div className="mx-auto w-full max-w-[1600px] px-8 pb-4 pt-5">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
-            <h1 className="min-w-0 break-words text-[32px] font-normal leading-10">
+        <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-4 px-8 py-5 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
+          <div className="min-w-0">
+            <Link
+              className="text-sm text-fg-muted transition-colors hover:text-fg"
+              href="/reviews"
+            >
+              Reviews /
+            </Link>
+            <h1 className="mt-2 break-words text-3xl font-semibold tracking-tight">
               {review.title}
-              {review.prNumber ? (
-                <span className="ml-2 font-light text-fg-muted">
-                  #{review.prNumber}
-                </span>
-              ) : null}
             </h1>
-            <div className="flex shrink-0 flex-wrap gap-2 sm:pt-1">
-              {review.status === "approved" ||
-              review.status === "changes_requested" ? (
-                <Button
-                  variant="outline"
-                  onClick={() => setReviewStatus("open")}
-                >
-                  <RotateCcw className="h-4 w-4" />
-                  Reopen
-                </Button>
-              ) : confirmApprove ? (
-                <div className="flex items-center gap-2 rounded-md border bg-canvas-subtle p-1">
-                  <span className="px-2 text-sm text-fg-muted">
-                    Approve review?
-                  </span>
-                  <Button size="sm" onClick={() => setReviewStatus("approved")}>
-                    Confirm
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => setConfirmApprove(false)}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              ) : (
-                <>
-                  <Button
-                    variant="danger"
-                    onClick={() => setReviewStatus("changes_requested")}
-                  >
-                    <X className="h-4 w-4" />
-                    Request changes
-                  </Button>
-                  <Button onClick={() => setConfirmApprove(true)}>
-                    <Check className="h-4 w-4" />
-                    Approve
-                  </Button>
-                </>
-              )}
-            </div>
-          </div>
-          <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-2 text-sm text-fg-muted">
-            <StatePill status={review.status} />
-            <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+            {review.summary ? (
+              <p className="mt-2 max-w-3xl text-base text-fg-muted">
+                {review.summary}
+              </p>
+            ) : null}
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-fg-muted">
+              <span className="inline-flex items-center gap-1 rounded-full border bg-canvas px-2 py-0.5 font-mono text-xs">
+                {review.repo}
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full border bg-canvas px-2 py-0.5 font-mono text-xs">
+                <GitBranch className="h-3 w-3" />
+                {review.branch}
+              </span>
+              <StatusBadge status={review.status} />
+              <span className="inline-flex items-center rounded-full border bg-canvas px-2 py-0.5 font-mono text-xs">
+                v{review.contentVersion}
+              </span>
               {review.origin === "derived" ? (
-                <span className="inline-flex items-center gap-1">
-                  <GitCompareArrows className="h-4 w-4" />
+                <span className="inline-flex items-center gap-1 rounded-full border bg-canvas px-2 py-0.5 text-xs">
+                  <GitCompareArrows className="h-3 w-3" />
                   derived from the diff
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1 font-semibold">
-                  <Bot className="h-4 w-4" />
+                <span className="inline-flex items-center gap-1 rounded-full border bg-canvas px-2 py-0.5 text-xs">
+                  <Bot className="h-3 w-3" />
                   {review.agentName ?? "authored"}
                 </span>
               )}
-              <span>published v{review.contentVersion} of</span>
-              <CommitRef>{review.branch}</CommitRef>
-              {review.baseRef ? (
-                <>
-                  <span>against</span>
-                  <CommitRef>{review.baseRef}</CommitRef>
-                </>
-              ) : null}
-              <span>in</span>
-              <span className="font-mono text-xs text-fg">{review.repo}</span>
-              <span aria-hidden>·</span>
               <RelativeTime prefix="updated" value={review.updatedAt} />
               {review.prUrl ? (
-                <>
-                  <span aria-hidden>·</span>
-                  <a
-                    className="inline-flex items-center gap-1 text-accent-fg hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    href={review.prUrl}
-                    rel="noreferrer"
-                    target="_blank"
-                  >
-                    PR #{review.prNumber ?? "?"}
-                    <ExternalLink className="h-3.5 w-3.5" />
-                  </a>
-                </>
+                <a
+                  className="inline-flex items-center gap-1 rounded-md border bg-canvas px-2 py-1 text-xs font-medium transition-colors hover:bg-control-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  href={review.prUrl}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  PR #{review.prNumber ?? "?"}
+                  <ExternalLink className="h-3 w-3" />
+                </a>
               ) : null}
-            </span>
+            </div>
           </div>
-          {review.summary ? (
-            <p className="mt-3 max-w-3xl text-base text-fg-muted">
-              {review.summary}
-            </p>
-          ) : null}
+          <div className="flex shrink-0 flex-wrap gap-2">
+            {review.status === "approved" ||
+            review.status === "changes_requested" ? (
+              <Button variant="outline" onClick={() => setReviewStatus("open")}>
+                <RotateCcw className="h-4 w-4" />
+                Reopen
+              </Button>
+            ) : confirmApprove ? (
+              <div className="flex items-center gap-2 rounded-md border bg-canvas p-1">
+                <span className="px-2 text-sm text-fg-muted">
+                  Approve review?
+                </span>
+                <Button size="sm" onClick={() => setReviewStatus("approved")}>
+                  Confirm
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setConfirmApprove(false)}
+                >
+                  Cancel
+                </Button>
+              </div>
+            ) : (
+              <>
+                <Button
+                  className="border-attention-border text-attention-fg hover:bg-attention-muted"
+                  variant="outline"
+                  onClick={() => setReviewStatus("changes_requested")}
+                >
+                  <X className="h-4 w-4" />
+                  Request changes
+                </Button>
+                <Button onClick={() => setConfirmApprove(true)}>
+                  <Check className="h-4 w-4" />
+                  Approve
+                </Button>
+              </>
+            )}
+          </div>
         </div>
       </header>
 
@@ -411,7 +389,7 @@ export function ReviewDetail({
             }}
           />
         </section>
-        <aside className="max-h-[calc(100vh-4rem)] space-y-4 overflow-y-auto lg:sticky lg:top-16">
+        <aside className="max-h-[calc(100vh-5rem)] space-y-4 overflow-y-auto lg:sticky lg:top-20">
           <Composer
             anchor={activeAnchor}
             message={message}
@@ -455,7 +433,7 @@ function TextSelectionToolbar({
 
   return (
     <button
-      className="fixed z-50 inline-flex h-7 items-center gap-1 rounded-md border border-btn-border bg-btn px-3 text-xs font-medium text-btn-fg shadow-resting transition-colors hover:bg-btn-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="fixed z-50 inline-flex items-center gap-1 rounded-full border bg-canvas px-3 py-1.5 text-sm font-medium shadow-resting transition-colors hover:bg-control-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       style={{
         left: selection.rect.left,
         top: selection.rect.top,
@@ -639,7 +617,7 @@ function EvidenceCode({
 
   return (
     <button
-      className="cursor-pointer rounded-md bg-neutral-muted px-[0.4em] py-[0.2em] font-mono text-[85%] text-accent-fg transition-colors hover:underline"
+      className="cursor-pointer rounded bg-canvas-subtle px-1 py-0.5 font-mono text-[0.85em] text-fg underline decoration-dotted underline-offset-2 transition-colors hover:bg-accent-muted hover:decoration-solid"
       type="button"
       title={evidenceLinkTitle(label)}
       onClick={() => links.onJump(blockId)}
@@ -1007,79 +985,13 @@ function evidenceFindingLabels(block: EvidenceBlockData) {
   return [...new Set(labels)].slice(0, 3);
 }
 
-function severityTone(severity: BlockSeverity): BadgeTone {
-  return severity === "blocking" ? "red" : "neutral";
-}
-
-// github's diffstat: five blocks split by the addition share
-function Diffstat({
-  additions,
-  deletions,
-}: {
-  additions: number;
-  deletions: number;
-}) {
-  const total = additions + deletions;
-  let added = 0;
-  let deleted = 0;
-  if (total > 0 && total <= 5) {
-    added = additions;
-    deleted = deletions;
-  } else if (total > 5) {
-    added = Math.round((additions / total) * 5);
-    deleted = Math.min(5 - added, Math.round((deletions / total) * 5));
-  }
-  const blocks = [
-    ...Array.from({ length: added }, () => "bg-success-emphasis"),
-    ...Array.from({ length: deleted }, () => "bg-danger-emphasis"),
-    ...Array.from(
-      { length: 5 - added - deleted },
-      () => "border border-border-muted bg-neutral-muted",
-    ),
-  ];
-  return (
-    <span
-      aria-hidden
-      className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-fg-muted"
-    >
-      {total}
-      <span className="inline-flex gap-px">
-        {blocks.map((block, index) => (
-          <span
-            // biome-ignore lint/suspicious/noArrayIndexKey: fixed five-block strip
-            key={index}
-            className={`size-2 ${block}`}
-          />
-        ))}
-      </span>
-    </span>
-  );
-}
-
-function DiffViewSwitch() {
-  const view = useContext(DiffViewContext);
-  return (
-    <div className="hidden h-7 items-center rounded-md bg-neutral-muted p-0.5 sm:flex">
-      {(["split", "unified"] as const).map((item) => {
-        const active = view.mode === item;
-        return (
-          <button
-            key={item}
-            aria-pressed={active}
-            className={`h-6 cursor-pointer rounded-[5px] border px-2 text-xs leading-5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-              active
-                ? "border-border bg-canvas font-semibold text-fg shadow-resting"
-                : "border-transparent text-fg hover:bg-control-hover"
-            }`}
-            type="button"
-            onClick={() => view.setMode(item)}
-          >
-            {item}
-          </button>
-        );
-      })}
-    </div>
-  );
+function severityChipClass(severity: BlockSeverity) {
+  const classes = {
+    blocking: "bg-danger-muted text-danger-fg",
+    minor: "bg-neutral-muted text-fg-muted",
+    fyi: "bg-neutral-muted text-fg-muted",
+  };
+  return classes[severity];
 }
 
 function EvidenceCard({
@@ -1095,6 +1007,7 @@ function EvidenceCard({
   onAnchor: (anchor: ReviewAnchor) => void;
   onToggle: () => void;
 }) {
+  const view = useContext(DiffViewContext);
   const stats = keyChangeStats(block);
   const lineCount =
     block.type === "annotated-code" ? block.data.code.split("\n").length : null;
@@ -1115,54 +1028,29 @@ function EvidenceCard({
       data-severity={block.severity}
     >
       <div
-        className={`sticky top-12 z-[5] flex items-start gap-2 rounded-t-md bg-canvas-subtle px-2 py-1 ${
+        className={`sticky top-12 z-[5] flex items-center gap-3 rounded-t-lg bg-canvas-subtle px-3 py-2 ${
           open ? "border-b" : ""
         }`}
         data-diff-header
       >
         <button
           aria-expanded={open}
-          className="group/toggle flex min-w-0 flex-1 cursor-pointer items-start gap-1 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="group/toggle -m-1 flex min-w-0 flex-1 cursor-pointer items-start gap-2 rounded-md p-1 text-left transition-colors hover:bg-control-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           title={open ? "Collapse evidence" : "Expand evidence"}
           type="button"
           onClick={onToggle}
         >
-          <span className="flex h-8 w-[22px] shrink-0 items-center justify-center text-fg-muted transition-colors group-hover/toggle:text-accent-fg">
-            {open ? (
-              <ChevronDown className="h-4 w-4" />
-            ) : (
-              <ChevronRight className="h-4 w-4" />
-            )}
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="flex min-h-8 items-center gap-2">
-              {stats ? (
-                <Diffstat
-                  additions={stats.additions}
-                  deletions={stats.deletions}
-                />
-              ) : null}
-              <span className="min-w-0 truncate font-mono text-xs text-fg">
-                {block.data.filename}
-              </span>
-              {block.severity ? (
-                <Badge className="shrink-0" tone={severityTone(block.severity)}>
-                  {block.severity}
-                </Badge>
-              ) : null}
-              {findings.map((label) => (
-                <Badge
-                  key={label}
-                  className="hidden shrink-0 md:inline-flex"
-                  tone="violet"
-                >
-                  {label}
-                </Badge>
-              ))}
-            </span>
+          <ChevronDown
+            className={`mt-0.5 h-4 w-4 shrink-0 text-fg-muted transition-all group-hover/toggle:translate-y-0.5 group-hover/toggle:text-fg ${
+              open
+                ? ""
+                : "-rotate-90 group-hover/toggle:translate-y-0 group-hover/toggle:translate-x-0.5"
+            }`}
+          />
+          <span className="min-w-0">
             {claim ? (
               <span
-                className={`block pb-1.5 text-sm leading-5 text-fg ${
+                className={`block text-sm font-medium leading-5 ${
                   open ? "" : "line-clamp-2"
                 }`}
                 data-block-id={block.id}
@@ -1171,17 +1059,46 @@ function EvidenceCard({
                 {claim}
               </span>
             ) : null}
+            <span
+              className={`flex items-center gap-2 font-mono text-xs text-fg-muted ${
+                claim ? "mt-1" : ""
+              }`}
+            >
+              {block.type === "diff" ? (
+                <FileCode2 className="h-3.5 w-3.5 shrink-0" />
+              ) : (
+                <Code2 className="h-3.5 w-3.5 shrink-0" />
+              )}
+              <span className="truncate">{block.data.filename}</span>
+              {block.severity ? (
+                <span
+                  className={`shrink-0 rounded-full px-1.5 py-0.5 font-sans text-[10px] font-semibold ${severityChipClass(
+                    block.severity,
+                  )}`}
+                >
+                  {block.severity}
+                </span>
+              ) : null}
+              {findings.map((label) => (
+                <span
+                  key={label}
+                  className="shrink-0 rounded-full bg-done-muted px-1.5 py-0.5 font-sans text-[10px] font-semibold text-done-fg"
+                >
+                  {label}
+                </span>
+              ))}
+            </span>
           </span>
         </button>
-        <div className="flex h-8 shrink-0 items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           {threads.length > 0 ? (
             <button
-              className="inline-flex h-5 cursor-pointer items-center gap-1 rounded-full bg-neutral-muted px-1.5 text-xs font-medium text-fg-muted transition-colors hover:text-accent-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="inline-flex cursor-pointer items-center gap-1 rounded-full border bg-canvas px-2 py-0.5 text-xs font-medium text-attention-fg transition-colors hover:bg-attention-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               title={`${threads.length} anchored thread${threads.length === 1 ? "" : "s"}`}
               type="button"
               onClick={() => scrollToThread(threads[0]?.root.id)}
             >
-              <MessageSquare className="h-3.5 w-3.5" />
+              <MessageSquare className="h-3 w-3" />
               {threads.length}
             </button>
           ) : null}
@@ -1196,16 +1113,32 @@ function EvidenceCard({
             </span>
           ) : null}
           {open && block.type === "diff" && !isOneSided ? (
-            <DiffViewSwitch />
+            <div className="hidden rounded-md border bg-canvas p-0.5 sm:flex">
+              {(["split", "unified"] as const).map((item) => (
+                <button
+                  key={item}
+                  aria-pressed={view.mode === item}
+                  className={`cursor-pointer rounded px-2 py-1 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                    view.mode === item
+                      ? "bg-neutral-muted font-medium text-fg"
+                      : "text-fg-muted hover:bg-control-hover hover:text-fg"
+                  }`}
+                  type="button"
+                  onClick={() => view.setMode(item)}
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
           ) : null}
           <button
             aria-label="Comment on block"
-            className="inline-flex size-7 cursor-pointer items-center justify-center rounded-md text-fg-muted opacity-0 transition-opacity hover:bg-control-hover hover:text-fg focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100"
+            className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-full border bg-canvas text-fg-muted opacity-0 transition-opacity hover:bg-control-hover hover:text-fg focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100"
             title="Comment on block"
             type="button"
             onClick={() => onAnchor({ blockId: block.id, kind: "block" })}
           >
-            <MessageSquare className="h-4 w-4" />
+            <MessageSquare className="h-3.5 w-3.5" />
           </button>
         </div>
       </div>
@@ -1268,7 +1201,7 @@ function CommentableBlock({
       block.type !== "image-diff" &&
       !(block.type === "rich-text" && isAside(block)) ? (
         <p
-          className="mb-2 text-sm font-semibold leading-6"
+          className="mb-2 text-sm font-medium leading-6"
           data-block-id={block.id}
           data-text-anchorable="true"
         >
@@ -1278,7 +1211,7 @@ function CommentableBlock({
       <div className="absolute right-1 top-1 z-10 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
         {threads.length > 0 ? (
           <button
-            className="inline-flex h-7 items-center gap-1 rounded-md border border-btn-border bg-btn px-2 text-xs font-medium text-btn-fg shadow-btn transition-colors hover:bg-btn-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="inline-flex h-8 items-center gap-1 rounded-full border bg-canvas px-2 text-xs font-medium text-attention-fg transition-colors hover:bg-attention-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             title={`${threads.length} anchored thread${threads.length === 1 ? "" : "s"}`}
             type="button"
             onClick={() => scrollToThread(threads[0]?.root.id)}
@@ -1289,7 +1222,7 @@ function CommentableBlock({
         ) : null}
         <button
           aria-label="Comment on block"
-          className="inline-flex size-7 items-center justify-center rounded-md border border-btn-border bg-btn text-fg-muted shadow-btn transition-colors hover:bg-btn-hover hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-full border bg-canvas text-fg-muted transition-colors hover:bg-control-hover hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           title="Comment on block"
           type="button"
           onClick={() => onAnchor({ blockId: block.id, kind: "block" })}
@@ -1382,7 +1315,7 @@ function BlockRenderer({
             >
               <div className="flex items-center justify-between gap-3 border-b bg-canvas-subtle px-3 py-2">
                 <h3 className="flex items-center gap-2 font-mono text-sm font-semibold">
-                  <Database className="h-4 w-4 text-muted-foreground" />
+                  <Database className="h-4 w-4 text-fg-muted" />
                   {entity.name}
                 </h3>
                 <div className="flex items-center gap-2">
@@ -1399,7 +1332,7 @@ function BlockRenderer({
                     className={`grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3 px-3 py-2 ${fieldToneClass(field.change)}`}
                   >
                     <span className="font-mono">{field.name}</span>
-                    <span className="min-w-0 text-right font-mono text-muted-foreground">
+                    <span className="min-w-0 text-right font-mono text-fg-muted">
                       {field.was ? (
                         <>
                           <span className="line-through">{field.was}</span>{" "}
@@ -1410,7 +1343,7 @@ function BlockRenderer({
                     </span>
                     {field.note ? (
                       <span
-                        className="col-span-2 text-xs text-muted-foreground"
+                        className="col-span-2 text-xs text-fg-muted"
                         data-block-id={block.id}
                         data-text-anchorable="true"
                       >
@@ -1425,10 +1358,10 @@ function BlockRenderer({
           {block.data.relations?.length ? (
             <div className="rounded-md border bg-canvas p-3 text-sm md:col-span-2">
               <h3 className="mb-2 flex items-center gap-2 font-medium">
-                <TableProperties className="h-4 w-4 text-muted-foreground" />
+                <TableProperties className="h-4 w-4 text-fg-muted" />
                 Relations
               </h3>
-              <ul className="space-y-1 text-muted-foreground">
+              <ul className="space-y-1 text-fg-muted">
                 {block.data.relations.map((relation) => (
                   <li key={relation}>→ {relation}</li>
                 ))}
@@ -1477,39 +1410,30 @@ function BlockRenderer({
   }
 }
 
-// github's markdown alerts: a colored left rule and a titled first line
 function CalloutBlock({
   block,
 }: {
   block: Extract<ReviewBlock, { type: "callout" }>;
 }) {
   const recommendation = block.data.recommendation;
-  const tone = calloutTone(block.data.tone);
-  const ToneIcon = tone.Icon;
   return (
     <div
-      className={`border-l-4 py-2 pl-4 pr-3 ${tone.border}`}
+      className={`rounded-md border border-l-4 px-4 py-3 ${calloutToneClass(
+        block.data.tone,
+      )}`}
       data-block-id={block.id}
       data-text-anchorable="true"
     >
-      <div className="mb-2 flex flex-wrap items-center gap-3">
+      {recommendation ? (
         <span
-          className={`inline-flex items-center gap-2 text-sm font-medium leading-5 ${tone.text}`}
+          className={`mb-2 inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${
+            recommendationBadge(recommendation).className
+          }`}
+          data-recommendation={recommendation}
         >
-          <ToneIcon className="h-4 w-4" />
-          {tone.title}
+          {recommendationBadge(recommendation).label}
         </span>
-        {recommendation ? (
-          <span
-            className={`inline-flex items-center gap-1 rounded-full px-2.5 text-xs font-medium leading-5 text-fg-on-emphasis ${
-              recommendationBadge(recommendation).className
-            }`}
-            data-recommendation={recommendation}
-          >
-            {recommendationBadge(recommendation).label}
-          </span>
-        ) : null}
-      </div>
+      ) : null}
       <div className="recap-prose max-w-[58rem]">
         <ReactMarkdown
           components={markdownComponents}
@@ -1549,29 +1473,33 @@ function FoldedProse({
     >
       <button
         aria-expanded={open}
-        className={`group/prose flex min-h-10 w-full cursor-pointer items-center gap-2 bg-canvas-subtle px-2 py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+        className={`group/prose flex w-full cursor-pointer items-center gap-2 bg-canvas-subtle px-3 py-2 text-left transition-colors hover:bg-control-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
           open ? "border-b" : ""
         }`}
         title={open ? "Collapse the notes" : "Expand the notes"}
         type="button"
         onClick={() => setOpen((value) => !value)}
       >
-        <span className="flex w-[22px] shrink-0 items-center justify-center text-fg-muted transition-colors group-hover/prose:text-accent-fg">
-          {open ? (
-            <ChevronDown className="h-4 w-4" />
-          ) : (
-            <ChevronRight className="h-4 w-4" />
-          )}
-        </span>
+        <ChevronDown
+          className={`h-4 w-4 shrink-0 text-fg-muted transition-transform group-hover/prose:text-fg ${
+            open ? "" : "-rotate-90"
+          }`}
+        />
         <span
-          className="min-w-0 flex-1 text-sm leading-5"
+          className="min-w-0 flex-1 text-sm font-medium leading-5"
           data-block-id={block.id}
           data-text-anchorable="true"
         >
           {block.summary ?? "Notes"}
         </span>
         {block.severity ? (
-          <Badge tone={severityTone(block.severity)}>{block.severity}</Badge>
+          <span
+            className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${severityChipClass(
+              block.severity,
+            )}`}
+          >
+            {block.severity}
+          </span>
         ) : null}
       </button>
       {open ? (
@@ -1594,59 +1522,34 @@ function FoldedProse({
 
 function recommendationBadge(recommendation: ReviewRecommendation) {
   const badges = {
-    merge: { label: "Merge", className: "bg-success-emphasis" },
+    merge: { label: "Merge", className: "bg-success-muted text-success-fg" },
     "merge-with-nits": {
       label: "Merge with nits",
-      className: "bg-success-emphasis",
+      className: "bg-success-muted text-success-fg",
     },
     "needs-changes": {
       label: "Needs changes",
-      className: "bg-danger-emphasis",
+      className: "bg-attention-muted text-attention-fg",
     },
     "cannot-judge-alone": {
       label: "Can't judge alone",
-      className: "bg-neutral-emphasis",
+      className: "bg-neutral-muted text-fg-muted",
     },
   };
   return badges[recommendation];
 }
 
-function calloutTone(
+function calloutToneClass(
   tone: "info" | "decision" | "risk" | "warning" | "success",
 ) {
-  const tones = {
-    info: {
-      title: "Note",
-      border: "border-l-accent-emphasis",
-      text: "text-accent-fg",
-      Icon: Info,
-    },
-    decision: {
-      title: "Decision",
-      border: "border-l-done-emphasis",
-      text: "text-done-fg",
-      Icon: MessageSquareWarning,
-    },
-    risk: {
-      title: "Risk",
-      border: "border-l-danger-emphasis",
-      text: "text-danger-fg",
-      Icon: OctagonAlert,
-    },
-    warning: {
-      title: "Warning",
-      border: "border-l-attention-emphasis",
-      text: "text-attention-fg",
-      Icon: TriangleAlert,
-    },
-    success: {
-      title: "Success",
-      border: "border-l-success-emphasis",
-      text: "text-success-fg",
-      Icon: CircleCheck,
-    },
+  const classes = {
+    info: "border-accent-border bg-accent-muted",
+    decision: "border-done-border bg-done-muted",
+    risk: "border-danger-border bg-diff-del-line",
+    warning: "border-attention-border bg-attention-muted",
+    success: "border-success-border bg-diff-add-line",
   };
-  return tones[tone];
+  return classes[tone];
 }
 
 function ApiEndpointBlock({
@@ -1664,12 +1567,12 @@ function ApiEndpointBlock({
       }`}
     >
       <button
-        className="grid w-full grid-cols-[24px_auto_minmax(0,1fr)_auto] items-center gap-2 bg-canvas-subtle px-3 py-2 text-left transition-colors hover:bg-control-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="grid w-full grid-cols-[24px_auto_minmax(0,1fr)_auto] items-center gap-2 bg-canvas-subtle px-3 py-2 text-left transition-colors hover:bg-canvas-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         type="button"
         onClick={() => setExpanded((value) => !value)}
       >
         <ChevronDown
-          className={`h-4 w-4 text-muted-foreground transition-transform ${
+          className={`h-4 w-4 text-fg-muted transition-transform ${
             expanded ? "rotate-180" : "-rotate-90"
           }`}
         />
@@ -1679,7 +1582,7 @@ function ApiEndpointBlock({
             {block.data.path}
           </span>
           {block.summary ? (
-            <span className="block truncate text-xs text-muted-foreground">
+            <span className="block truncate text-xs text-fg-muted">
               {block.summary}
             </span>
           ) : null}
@@ -1691,7 +1594,7 @@ function ApiEndpointBlock({
           {block.data.params.length > 0 ? (
             <div className="overflow-x-auto border-t">
               <table className="w-full text-left text-sm">
-                <thead className="text-xs uppercase tracking-wide text-muted-foreground">
+                <thead className="text-xs uppercase tracking-wide text-fg-muted">
                   <tr>
                     <th className="px-3 py-2 font-medium">Param</th>
                     <th className="px-3 py-2 font-medium">Type</th>
@@ -1705,20 +1608,18 @@ function ApiEndpointBlock({
                       className={fieldToneClass(param.change)}
                     >
                       <td className="px-3 py-2 font-mono">{param.name}</td>
-                      <td className="px-3 py-2 font-mono text-xs text-muted-foreground">
+                      <td className="px-3 py-2 font-mono text-xs text-fg-muted">
                         {param.was ? (
                           <>
                             <span className="line-through">{param.was}</span>{" "}
                             <span>→</span>{" "}
                           </>
                         ) : null}
-                        <span className="rounded-md bg-neutral-muted px-1.5 py-0.5">
+                        <span className="rounded border bg-canvas-subtle px-1.5 py-0.5">
                           {param.type ?? "-"}
                         </span>
                       </td>
-                      <td className="px-3 py-2 text-muted-foreground">
-                        {param.note}
-                      </td>
+                      <td className="px-3 py-2 text-fg-muted">{param.note}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1742,47 +1643,26 @@ function ApiEndpointBlock({
   );
 }
 
-// github's State pill in the pull request palette
-function StatePill({
+function StatusBadge({
   status,
 }: {
   status: "open" | "approved" | "changes_requested" | "archived";
 }) {
-  const states = {
-    open: {
-      label: "Open",
-      className: "bg-success-emphasis",
-      Icon: GitPullRequestArrow,
-    },
-    approved: { label: "Approved", className: "bg-done-emphasis", Icon: Check },
-    changes_requested: {
-      label: "Changes requested",
-      className: "bg-danger-emphasis",
-      Icon: FileDiff,
-    },
-    archived: {
-      label: "Archived",
-      className: "bg-neutral-emphasis",
-      Icon: Archive,
-    },
-  };
-  const state = states[status];
-  const StateIcon = state.Icon;
   return (
-    <span
-      className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-sm font-medium leading-5 text-fg-on-emphasis ${state.className}`}
+    <Badge
+      className="capitalize"
+      tone={
+        status === "open"
+          ? "blue"
+          : status === "approved"
+            ? "green"
+            : status === "changes_requested"
+              ? "amber"
+              : "neutral"
+      }
     >
-      <StateIcon className="h-4 w-4" />
-      {state.label}
-    </span>
-  );
-}
-
-function CommitRef({ children }: { children: ReactNode }) {
-  return (
-    <span className="rounded-md bg-accent-muted px-1 font-mono text-xs leading-5 text-accent-fg">
-      {children}
-    </span>
+      {status.replace("_", " ")}
+    </Badge>
   );
 }
 
@@ -1813,10 +1693,10 @@ function ChangeShapeBlock({
               {area.area}
             </span>
             <ChangeBadge change={area.change} />
-            <span className="w-14 shrink-0 text-xs text-muted-foreground">
+            <span className="w-14 shrink-0 text-xs text-fg-muted">
               {area.files} {area.files === 1 ? "file" : "files"}
             </span>
-            <div className="h-2 flex-1 overflow-hidden rounded-full bg-neutral-muted">
+            <div className="h-2 flex-1 overflow-hidden rounded-full bg-canvas-subtle">
               <div
                 className="flex h-full overflow-hidden rounded-full"
                 style={{ width: `${width}%` }}
@@ -1889,7 +1769,7 @@ function PathLabel({ path }: { path: string }) {
   }
   return (
     <span className="truncate font-mono">
-      <span className="text-muted-foreground">{path.slice(0, index + 1)}</span>
+      <span className="text-fg-muted">{path.slice(0, index + 1)}</span>
       <span>{path.slice(index + 1)}</span>
     </span>
   );
@@ -1950,10 +1830,10 @@ function FileTreeBlock({
               }
             >
               <span className="flex items-center gap-2">
-                <Folder className="h-4 w-4 text-muted-foreground" />
+                <Folder className="h-4 w-4 text-fg-muted" />
                 <span className="font-mono">{group}</span>
               </span>
-              <Counter>{groupEntries.length}</Counter>
+              <Badge>{groupEntries.length}</Badge>
             </button>
             {open
               ? groupEntries.map((entry) => (
@@ -1988,7 +1868,7 @@ function FileTreeRow({
       <span className="min-w-0">
         <PathLabel path={entry.path} />
         {entry.note ? (
-          <span className="block truncate text-xs text-muted-foreground">
+          <span className="block truncate text-xs text-fg-muted">
             {entry.note}
           </span>
         ) : null}
@@ -2019,7 +1899,7 @@ function FileTreeRow({
         )}
         <button
           aria-label={`Comment on ${entry.path}`}
-          className="shrink-0 cursor-pointer px-2 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover/file:opacity-100"
+          className="shrink-0 cursor-pointer px-2 text-fg-muted opacity-0 transition-opacity hover:text-fg focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover/file:opacity-100"
           title={`Comment on ${entry.path}`}
           type="button"
           onClick={() =>
@@ -2096,7 +1976,7 @@ function PatchPanel({ attachmentId }: { attachmentId: string }) {
     );
   }
   return (
-    <pre className="max-h-96 overflow-auto border-t bg-canvas px-3 py-2 font-mono text-xs leading-5">
+    <pre className="max-h-96 overflow-auto border-t bg-canvas-subtle px-3 py-2 font-mono text-xs leading-5">
       {patch.split("\n").map((line, index) => (
         <div
           // biome-ignore lint/suspicious/noArrayIndexKey: patch lines are static once fetched
@@ -2115,13 +1995,13 @@ function patchLineClass(line: string) {
     return "text-fg-muted";
   }
   if (line.startsWith("@@")) {
-    return "bg-diff-hunk-line text-fg-muted";
+    return "text-accent-fg";
   }
   if (line.startsWith("+")) {
-    return "bg-diff-add-line";
+    return "bg-success-muted text-success-fg";
   }
   if (line.startsWith("-")) {
-    return "bg-diff-del-line";
+    return "bg-danger-muted text-danger-fg";
   }
   if (
     line.startsWith("diff --git") ||
@@ -2130,7 +2010,7 @@ function patchLineClass(line: string) {
     line.startsWith("deleted file") ||
     line.startsWith("rename ")
   ) {
-    return "text-muted-foreground";
+    return "text-fg-muted";
   }
   return "";
 }
@@ -2212,7 +2092,7 @@ function QuestionCard({
   return (
     <div className="rounded-md border bg-canvas p-4">
       <div className="flex gap-3">
-        <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-neutral-muted text-sm font-medium">
+        <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border bg-canvas-subtle text-sm font-medium">
           {index + 1}
         </span>
         <div className="min-w-0 flex-1">
@@ -2220,7 +2100,7 @@ function QuestionCard({
           {question.mode === "freeform" ? (
             <textarea
               aria-label={question.prompt}
-              className="mt-3 min-h-24 w-full resize-y rounded-md border bg-canvas px-3 py-2 text-sm shadow-input outline-none transition-colors focus-visible:border-focus focus-visible:ring-1 focus-visible:ring-focus"
+              className="mt-3 min-h-24 w-full resize-y rounded-md border bg-canvas p-3 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring"
               value={freeform}
               onChange={(event) => setFreeform(event.target.value)}
             />
@@ -2231,7 +2111,7 @@ function QuestionCard({
                 return (
                   <button
                     key={option}
-                    className={`flex items-center gap-2 rounded-md border p-3 text-left text-sm transition-colors hover:bg-canvas-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                    className={`flex items-center gap-2 rounded-md border p-3 text-left text-sm transition-colors hover:bg-control-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                       active
                         ? "border-accent-emphasis bg-accent-muted"
                         : "bg-canvas"
@@ -2324,7 +2204,9 @@ function ImageDiffBlock({
       <figure
         key={image.label}
         className={`min-w-0 overflow-hidden rounded-md border bg-canvas ${
-          image.tone === "diff" ? "border-attention-emphasis" : ""
+          image.tone === "diff"
+            ? "border-attention-border bg-attention-muted"
+            : ""
         }`}
         data-visual-panel={image.label}
       >
@@ -2369,20 +2251,18 @@ function ImageDiffBlock({
     >
       <button
         aria-expanded={open}
-        className={`group/visual flex min-h-10 w-full cursor-pointer items-center gap-2 bg-canvas-subtle px-2 py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+        className={`group/visual flex w-full cursor-pointer items-center gap-3 bg-canvas-subtle px-3 py-2 text-left transition-colors hover:bg-control-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
           open ? "border-b" : ""
         }`}
         title={open ? "Collapse the comparison" : "Expand the comparison"}
         type="button"
         onClick={() => setOpen((value) => !value)}
       >
-        <span className="flex w-[22px] shrink-0 items-center justify-center text-fg-muted transition-colors group-hover/visual:text-accent-fg">
-          {open ? (
-            <ChevronDown className="h-4 w-4" />
-          ) : (
-            <ChevronRight className="h-4 w-4" />
-          )}
-        </span>
+        <ChevronDown
+          className={`h-4 w-4 shrink-0 text-fg-muted transition-transform group-hover/visual:text-fg ${
+            open ? "" : "-rotate-90"
+          }`}
+        />
         <ImageIcon className="h-4 w-4 shrink-0 text-fg-muted" />
         <span className="min-w-0 flex-1">
           {block.summary ? (
@@ -2391,8 +2271,8 @@ function ImageDiffBlock({
             </span>
           ) : null}
           <span
-            className={`block truncate font-mono text-xs text-fg-muted ${
-              block.summary ? "mt-0.5" : "text-fg"
+            className={`block truncate text-xs text-fg-muted ${
+              block.summary ? "mt-0.5" : "text-sm font-medium text-fg"
             }`}
             title={
               block.data.baseline
@@ -2455,12 +2335,12 @@ function ScreenRecordingBlock({
       className="overflow-hidden rounded-md border bg-canvas"
       data-screen-recording
     >
-      <div className="flex items-start gap-3 border-b bg-canvas-subtle px-4 py-3">
+      <div className="flex items-start gap-3 border-b px-4 py-3">
         <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-neutral-emphasis text-fg-on-emphasis">
           <Video className="h-4 w-4" />
         </span>
         <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase text-muted-foreground">
+          <p className="text-xs font-semibold uppercase text-fg-muted">
             Screen recording
           </p>
           <h3 className="truncate text-lg font-semibold">{block.data.title}</h3>
@@ -2478,7 +2358,7 @@ function ScreenRecordingBlock({
       </video>
       {block.data.caption ? (
         <p
-          className="border-t px-4 py-3 text-sm text-muted-foreground"
+          className="border-t px-4 py-3 text-sm text-fg-muted"
           data-block-id={block.id}
           data-text-anchorable="true"
         >
@@ -2582,10 +2462,6 @@ function DiffBlockBody({
     () => buildDiffDisplayRows(rows, annotations, threads, expandedGroups),
     [rows, annotations, threads, expandedGroups],
   );
-  const lastLine = rows.reduce(
-    (max, row) => Math.max(max, row.beforeLine ?? 0, row.afterLine ?? 0),
-    0,
-  );
   function toggleGroup(id: string) {
     setExpandedGroups((current) => {
       const next = new Set(current);
@@ -2599,10 +2475,7 @@ function DiffBlockBody({
   }
   return (
     <div ref={codeSurfaceRef} className="min-w-0" data-diff-code>
-      <div
-        className="overflow-x-auto font-mono text-xs leading-5"
-        style={gutterStyle(lastLine)}
-      >
+      <div className="overflow-x-auto font-mono text-[0.75rem] leading-5">
         {displayRows.map((item) =>
           item.type === "collapse" ? (
             <CollapsedDiffRow
@@ -2618,6 +2491,7 @@ function DiffBlockBody({
               key={`annotation:${item.annotation.marker}`}
               annotation={item.annotation}
               blockId={block.id}
+              unified={unified}
             />
           ) : unified ? (
             <UnifiedDiffRow
@@ -2667,26 +2541,25 @@ function SplitDiffRow({
 }) {
   const emphasis =
     row.kind === "modify" ? intralineRanges(row.before, row.after) : null;
-  const beforeTone =
+  const beforeTone: CellTone =
     row.kind === "remove" || row.kind === "modify"
       ? "remove"
       : row.kind === "add"
         ? "empty"
         : "context";
-  const afterTone =
+  const afterTone: CellTone =
     row.kind === "add" || row.kind === "modify"
       ? "add"
       : row.kind === "remove"
         ? "empty"
         : "context";
   return (
-    <div className={`diff-row ${SPLIT_ROW}`}>
+    <div className="grid min-w-[760px] grid-cols-[64px_minmax(0,1fr)_64px_minmax(0,1fr)]">
       <LineButton
         id={lineTargetId(block.id, "before", row.beforeLine)}
         line={row.beforeLine}
         side="before"
         tone={beforeTone}
-        plus
         threadIds={lineThreadIds(threads, "before", row.beforeLine)}
         marker={annotationMarkerStartingAt(
           annotations,
@@ -2706,7 +2579,6 @@ function SplitDiffRow({
         }
       />
       <CodeCell
-        side="before"
         tokens={
           row.beforeIndex === undefined
             ? []
@@ -2714,7 +2586,7 @@ function SplitDiffRow({
         }
         tone={beforeTone}
         value={row.before}
-        sign={beforeTone === "remove" ? "-" : undefined}
+        sign={beforeTone === "remove" ? "-" : " "}
         emphasis={emphasis?.before}
       />
       <LineButton
@@ -2722,8 +2594,6 @@ function SplitDiffRow({
         line={row.afterLine}
         side="after"
         tone={afterTone}
-        plus
-        divider
         threadIds={lineThreadIds(threads, "after", row.afterLine)}
         marker={annotationMarkerStartingAt(annotations, "after", row.afterLine)}
         annotated={lineHasAnnotation(annotations, "after", row.afterLine)}
@@ -2739,13 +2609,12 @@ function SplitDiffRow({
         }
       />
       <CodeCell
-        side="after"
         tokens={
           row.afterIndex === undefined ? [] : highlightedAfter[row.afterIndex]
         }
         tone={afterTone}
         value={row.after}
-        sign={afterTone === "add" ? "+" : undefined}
+        sign={afterTone === "add" ? "+" : " "}
         emphasis={emphasis?.after}
       />
     </div>
@@ -2836,8 +2705,6 @@ function UnifiedDiffRow({
   );
 }
 
-// github's unified rows keep both line-number columns; the absent side is a
-// blank cell in the row's tint
 function UnifiedDiffLine({
   block,
   row,
@@ -2863,36 +2730,29 @@ function UnifiedDiffLine({
   onAnchor: (anchor: ReviewAnchor) => void;
   emphasis?: Array<[number, number]>;
 }) {
-  const beforeLine = tone === "add" ? undefined : row.beforeLine;
-  const afterLine = tone === "remove" ? undefined : row.afterLine;
-  const gutter = (gutterSide: "before" | "after", line?: number) => (
-    <LineButton
-      id={lineTargetId(block.id, gutterSide, line)}
-      line={line}
-      side={gutterSide}
-      tone={tone}
-      plus={gutterSide === side}
-      threadIds={lineThreadIds(threads, gutterSide, line)}
-      marker={annotationMarkerStartingAt(annotations, gutterSide, line)}
-      annotated={lineHasAnnotation(annotations, gutterSide, line)}
-      onClick={() =>
-        line
-          ? onAnchor({
-              blockId: block.id,
-              kind: "line",
-              filePath: block.data.filename,
-              line: { side: gutterSide, start: line },
-            })
-          : undefined
-      }
-    />
-  );
+  const line = side === "before" ? row.beforeLine : row.afterLine;
   return (
-    <div className={`diff-row ${UNIFIED_ROW}`} data-side={side}>
-      {gutter("before", beforeLine)}
-      {gutter("after", afterLine)}
-      <CodeCell
+    <div className="grid min-w-[560px] grid-cols-[64px_minmax(0,1fr)]">
+      <LineButton
+        id={lineTargetId(block.id, side, line)}
+        line={line}
+        tone={tone}
+        threadIds={lineThreadIds(threads, side, line)}
+        marker={annotationMarkerStartingAt(annotations, side, line)}
+        annotated={lineHasAnnotation(annotations, side, line)}
         side={side}
+        onClick={() =>
+          line
+            ? onAnchor({
+                blockId: block.id,
+                kind: "line",
+                filePath: block.data.filename,
+                line: { side, start: line },
+              })
+            : undefined
+        }
+      />
+      <CodeCell
         tokens={tokens}
         tone={tone}
         sign={sign}
@@ -2938,10 +2798,7 @@ function AnnotatedCodeBody({
   const visibleLines = expanded ? lines : lines.slice(0, previewCount);
   return (
     <div className="min-w-0">
-      <div
-        className="overflow-x-auto font-mono text-xs leading-5"
-        style={gutterStyle(startLine + lines.length - 1)}
-      >
+      <div className="overflow-x-auto font-mono text-[0.75rem] leading-5">
         {visibleLines.map((line, index) => {
           const lineNumber = startLine + index;
           const endingAnnotations = annotations.filter(
@@ -2949,7 +2806,7 @@ function AnnotatedCodeBody({
           );
           return (
             <Fragment key={`${lineNumber}:${line}`}>
-              <div className={`diff-row ${CODE_ROW}`}>
+              <div className="grid min-w-[560px] grid-cols-[64px_minmax(0,1fr)]">
                 <LineButton
                   id={lineTargetId(block.id, "after", lineNumber)}
                   line={lineNumber}
@@ -2965,8 +2822,6 @@ function AnnotatedCodeBody({
                     lineNumber,
                   )}
                   side="after"
-                  tone="context"
-                  plus
                   onClick={() =>
                     onAnchor({
                       blockId: block.id,
@@ -2977,7 +2832,6 @@ function AnnotatedCodeBody({
                   }
                 />
                 <CodeCell
-                  side="after"
                   tokens={highlightedLines[index]}
                   tone="context"
                   value={line}
@@ -2988,35 +2842,24 @@ function AnnotatedCodeBody({
                   key={`annotation:${annotation.marker}`}
                   annotation={annotation}
                   blockId={block.id}
+                  unified
                 />
               ))}
             </Fragment>
           );
         })}
-        {!expanded && lines.length > visibleLines.length ? (
-          <button
-            className={`group/hunk w-full cursor-pointer text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${CODE_ROW}`}
-            type="button"
-            onClick={() => setExpanded(true)}
-          >
-            <span className="flex items-center justify-center bg-diff-hunk-num text-fg-muted transition-colors group-hover/hunk:bg-diff-hunk-num-hover group-hover/hunk:text-fg-on-emphasis">
-              <UnfoldVertical className="h-4 w-4" />
-            </span>
-            <span className="bg-diff-hunk-line py-1 pl-[22px] pr-[10px] text-xs leading-5 text-fg-muted">
-              Show all {lines.length} lines
-            </span>
-          </button>
-        ) : null}
       </div>
+      {!expanded && lines.length > visibleLines.length ? (
+        <button
+          className="w-full border-t bg-canvas-subtle px-3 py-2 text-sm font-medium text-fg-muted transition-colors hover:bg-control-hover"
+          type="button"
+          onClick={() => setExpanded(true)}
+        >
+          Show all {lines.length} lines
+        </button>
+      ) : null}
     </div>
   );
-}
-
-function gutterStyle(lastLine: number) {
-  const digits = String(Math.max(lastLine, 1)).length;
-  return {
-    "--diff-gutter": `${Math.max(50, 20 + digits * 7.5)}px`,
-  } as CSSProperties;
 }
 
 type DiffDisplayRow =
@@ -3260,29 +3103,21 @@ function CollapsedDiffRow({
 }) {
   const range =
     startLine !== undefined && endLine !== undefined
-      ? ` (${startLine}\u2013${endLine})`
+      ? ` (${startLine}–${endLine})`
       : "";
   return (
     <button
-      className={`group/hunk w-full cursor-pointer text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${
-        unified ? UNIFIED_ROW : SPLIT_ROW
+      className={`grid w-full min-w-[560px] border-y bg-canvas-subtle text-center text-xs font-medium text-fg-muted transition-colors hover:bg-control-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+        unified
+          ? "grid-cols-[64px_minmax(0,1fr)]"
+          : "grid-cols-[64px_minmax(0,1fr)_64px_minmax(0,1fr)]"
       }`}
       type="button"
       onClick={onExpand}
     >
-      <span
-        className={`flex items-center justify-center bg-diff-hunk-num text-fg-muted transition-colors group-hover/hunk:bg-diff-hunk-num-hover group-hover/hunk:text-fg-on-emphasis ${
-          unified ? "col-span-2" : ""
-        }`}
-      >
-        <UnfoldVertical className="h-4 w-4" />
-      </span>
-      <span
-        className={`bg-diff-hunk-line py-1 pl-[22px] pr-[10px] text-xs leading-5 text-fg-muted ${
-          unified ? "" : "col-span-3"
-        }`}
-      >
-        {count} unchanged lines{range}
+      <span />
+      <span className={unified ? "px-3 py-1" : "col-span-3 px-3 py-1"}>
+        · {count} unchanged lines{range} ·
       </span>
     </button>
   );
@@ -3294,9 +3129,7 @@ function LineButton({
   id,
   line,
   side,
-  tone,
-  plus,
-  divider,
+  tone = "context",
   threadIds,
   marker,
   annotated,
@@ -3305,16 +3138,14 @@ function LineButton({
   id?: string;
   line?: number;
   side: "before" | "after";
-  tone: CellTone;
-  plus?: boolean;
-  divider?: boolean;
+  tone?: CellTone;
   threadIds: string[];
   marker?: number;
   annotated?: boolean;
   onClick: () => void;
 }) {
   const count = threadIds.length;
-  const numClass =
+  const toneClass =
     tone === "add"
       ? "bg-diff-add-num text-fg"
       : tone === "remove"
@@ -3325,12 +3156,9 @@ function LineButton({
   return (
     <button
       id={id}
-      className={`relative flex h-full min-h-5 cursor-pointer items-center justify-end gap-1 px-[10px] text-right text-xs leading-5 tabular-nums transition-colors hover:text-fg disabled:cursor-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${numClass} ${
-        divider ? "border-l" : ""
-      }`}
-      data-side={side}
+      className={`group/gutter relative flex min-h-5 cursor-pointer items-center justify-end gap-1 px-2 text-right tabular-nums transition-colors hover:text-fg disabled:cursor-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${toneClass}`}
       disabled={!line}
-      title={line ? `Comment on ${side} line ${line}` : undefined}
+      title={`Comment on ${side} line ${line}`}
       type="button"
       onClick={() => {
         if (count > 0) {
@@ -3341,24 +3169,20 @@ function LineButton({
       }}
     >
       {marker ? (
-        <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-done-muted px-1 text-[10px] font-semibold text-done-fg">
+        <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-done-muted text-[10px] font-semibold text-done-fg">
           {marker}
         </span>
       ) : null}
       {count ? (
-        <span className="inline-flex h-4 items-center gap-0.5 rounded-full bg-neutral-muted px-1 text-[10px] font-semibold text-fg-muted">
+        <span className="inline-flex items-center gap-0.5 rounded-full bg-attention-muted px-1 text-[10px] font-semibold text-attention-fg">
           <MessageSquare className="h-3 w-3" />
           {count}
         </span>
       ) : null}
       <span>{line ?? ""}</span>
-      {plus && line ? (
-        <span
-          aria-hidden
-          className="add-line-comment absolute -right-[11px] top-[-1px] z-10 flex size-[22px] items-center justify-center rounded-md bg-accent-emphasis text-fg-on-emphasis shadow-resting"
-          data-plus={side}
-        >
-          <Plus className="h-4 w-4" strokeWidth={2.5} />
+      {line ? (
+        <span className="ml-1 hidden text-accent-fg group-hover/gutter:inline">
+          +
         </span>
       ) : null}
       {annotated ? (
@@ -3376,22 +3200,20 @@ function CodeCell({
   value,
   tone,
   sign,
-  side,
   tokens,
   emphasis,
 }: {
   value: string;
   tone: CellTone;
   sign?: string;
-  side: "before" | "after";
   tokens?: HighlightLine;
   emphasis?: Array<[number, number]>;
 }) {
   const toneClass =
     tone === "add"
-      ? "bg-diff-add-line"
+      ? "bg-diff-add-line text-fg"
       : tone === "remove"
-        ? "bg-diff-del-line"
+        ? "bg-diff-del-line text-fg"
         : tone === "empty"
           ? "bg-diff-empty"
           : "bg-canvas";
@@ -3401,22 +3223,27 @@ function CodeCell({
     : baseTokens;
   const emphasisClass =
     tone === "add"
-      ? "rounded-[0.2em] bg-diff-add-word"
+      ? "rounded-sm bg-diff-add-word"
       : tone === "remove"
-        ? "rounded-[0.2em] bg-diff-del-word"
+        ? "rounded-sm bg-diff-del-word"
         : "";
   return (
     <code
-      className={`relative block min-w-0 overflow-hidden whitespace-pre-wrap break-words pl-[22px] pr-[10px] text-fg ${toneClass}`}
+      className={`flex min-w-0 overflow-hidden whitespace-pre-wrap px-3 ${toneClass}`}
       data-diff-code-cell
-      data-side={side}
     >
-      {sign && sign !== " " ? (
-        <span aria-hidden className="absolute left-2 top-0 select-none">
-          {sign}
-        </span>
-      ) : null}
-      <span className="syntax-highlight">
+      <span
+        className={`mr-2 w-3 shrink-0 ${
+          sign === "+"
+            ? "text-success-fg"
+            : sign === "-"
+              ? "text-danger-fg"
+              : "text-fg-muted"
+        }`}
+      >
+        {sign ?? " "}
+      </span>
+      <span className="syntax-highlight min-w-0 break-words">
         {renderHighlightLine(displayTokens, emphasisClass)}
       </span>
     </code>
@@ -3470,31 +3297,45 @@ function annotationRangeLabel(annotation: {
   return annotation.side === "before" ? `old ${range}` : range;
 }
 
-// github's inline review comment: a muted band holding a bordered note
 function AnnotationCard({
   annotation,
   blockId,
+  unified,
 }: {
   annotation: NumberedAnnotation;
   blockId: string;
+  unified: boolean;
 }) {
   return (
     <div
-      className="min-w-[560px] border-y bg-canvas-subtle px-4 py-2 font-sans"
+      className={`grid border-y ${
+        unified
+          ? "min-w-[560px] grid-cols-[64px_minmax(0,1fr)]"
+          : "min-w-[760px] grid-cols-[64px_minmax(0,1fr)_64px_minmax(0,1fr)]"
+      }`}
       data-diff-annotation={annotation.marker}
     >
-      <div className="max-w-[780px] rounded-md border bg-canvas">
-        <div className="flex flex-wrap items-center gap-2 px-3 pt-2 text-xs text-fg-muted">
-          <span className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-done-muted px-1 font-semibold text-done-fg">
+      <span className="bg-canvas-subtle" />
+      <div
+        className={`border-l-[3px] border-l-done-emphasis bg-done-muted px-3 py-2 font-sans ${
+          unified ? "" : "col-span-3"
+        }`}
+      >
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-done-muted font-semibold text-done-fg">
             {annotation.marker}
           </span>
           {annotation.label ? (
-            <span className="font-semibold text-fg">{annotation.label}</span>
+            <span className="font-semibold text-done-fg">
+              {annotation.label}
+            </span>
           ) : null}
-          <span>{annotationRangeLabel(annotation)}</span>
+          <span className="text-done-fg">
+            {annotationRangeLabel(annotation)}
+          </span>
         </div>
         <p
-          className="px-3 pb-2 pt-1 text-sm leading-5 text-fg"
+          className="mt-1 max-w-[58rem] text-sm leading-6"
           data-block-id={blockId}
           data-text-anchorable="true"
         >
@@ -3725,7 +3566,7 @@ function MermaidBlock({
         <>
           <button
             aria-label="Expand diagram"
-            className="absolute right-3 top-3 z-10 inline-flex size-7 items-center justify-center rounded-md border border-btn-border bg-btn text-fg-muted opacity-0 shadow-btn transition-opacity hover:bg-btn-hover hover:text-fg focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100"
+            className="absolute right-3 top-3 z-10 inline-flex h-8 w-8 items-center justify-center rounded-full border bg-canvas/90 text-fg-muted opacity-0 transition-opacity hover:bg-control-hover hover:text-fg focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100"
             title="Expand diagram"
             type="button"
             onClick={() => setExpanded(true)}
@@ -3742,10 +3583,8 @@ function MermaidBlock({
           />
         </>
       ) : error ? (
-        <div className="rounded-md border border-danger-border bg-danger-muted p-3 text-sm text-fg">
-          <div className="font-medium text-danger-fg">
-            Diagram could not be rendered
-          </div>
+        <div className="rounded-md border border-danger-border bg-danger-muted p-3 text-sm text-danger-fg">
+          <div className="font-medium">Diagram could not be rendered</div>
           <p className="mt-1">{error}</p>
           <details className="mt-2">
             <summary className="cursor-pointer">Source</summary>
@@ -3838,10 +3677,10 @@ function Composer({
   }, [message, anchor]);
 
   return (
-    <div className="rounded-md border bg-canvas">
+    <div className="rounded-md border bg-canvas p-4">
       {!expanded ? (
         <button
-          className="block w-full cursor-text rounded-md px-3 py-2 text-left text-sm text-fg-muted transition-colors hover:bg-canvas-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="w-full rounded-md border bg-canvas px-3 py-2 text-left text-sm text-fg-muted transition-colors hover:bg-control-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           type="button"
           onClick={() => setExpanded(true)}
         >
@@ -3849,10 +3688,10 @@ function Composer({
         </button>
       ) : (
         <>
-          <div className="flex items-center justify-between gap-3 rounded-t-md border-b bg-canvas-subtle px-3 py-2 text-sm">
-            <span className="font-semibold">New comment</span>
+          <div className="mb-3 flex items-center justify-between gap-3 text-sm">
+            <span className="font-medium">New comment</span>
             <button
-              className="inline-flex min-w-0 items-center gap-1 rounded-md bg-accent-muted px-1.5 font-mono text-xs leading-5 text-accent-fg transition-colors hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="inline-flex min-w-0 items-center gap-1 rounded-full border bg-canvas-subtle px-2 py-0.5 font-mono text-xs text-fg-muted transition-colors hover:bg-control-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               title="Clear anchor"
               type="button"
               onClick={() => onAnchor(null)}
@@ -3861,55 +3700,48 @@ function Composer({
               {anchor ? <X className="h-3 w-3" /> : null}
             </button>
           </div>
-          <div className="p-3">
-            <textarea
-              aria-label="Comment text"
-              className="min-h-28 w-full resize-y rounded-md border bg-canvas px-3 py-2 text-sm shadow-input outline-none transition-colors placeholder:text-fg-muted focus-visible:border-focus focus-visible:ring-1 focus-visible:ring-focus"
-              placeholder="Leave a comment"
-              value={message}
-              onChange={(event) => onMessage(event.target.value)}
-            />
-            <div className="mt-3 grid h-8 grid-cols-2 gap-0.5 rounded-md bg-neutral-muted p-0.5 text-sm">
-              {(
-                [
-                  { target: "agent", label: "Agent should fix", Icon: Bot },
-                  {
-                    target: "human",
-                    label: "FYI for humans",
-                    Icon: MessageSquare,
-                  },
-                ] as const
-              ).map(({ target, label: targetLabel, Icon }) => {
-                const active = resolutionTarget === target;
-                return (
-                  <button
-                    key={target}
-                    aria-pressed={active}
-                    className={`inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-[5px] border px-2 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                      active
-                        ? "border-border bg-canvas font-semibold text-fg shadow-resting"
-                        : "border-transparent text-fg hover:bg-control-hover"
-                    }`}
-                    type="button"
-                    onClick={() => onResolutionTarget(target)}
-                  >
-                    <Icon className="h-4 w-4 text-fg-muted" />
-                    {targetLabel}
-                  </button>
-                );
-              })}
+          <textarea
+            aria-label="Comment text"
+            className="min-h-28 w-full resize-y rounded-md border bg-canvas p-3 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring"
+            value={message}
+            onChange={(event) => onMessage(event.target.value)}
+          />
+          <div className="mt-3 rounded-md border bg-canvas-subtle p-1">
+            <div className="grid grid-cols-2 gap-1 text-sm">
+              <button
+                className={`rounded-md px-3 py-2 transition-colors ${
+                  resolutionTarget === "agent"
+                    ? "bg-canvas text-fg"
+                    : "text-fg-muted hover:bg-control-hover"
+                }`}
+                type="button"
+                onClick={() => onResolutionTarget("agent")}
+              >
+                <Bot className="mr-1 inline h-4 w-4" />
+                Agent should fix
+              </button>
+              <button
+                className={`rounded-md px-3 py-2 transition-colors ${
+                  resolutionTarget === "human"
+                    ? "bg-canvas text-fg"
+                    : "text-fg-muted hover:bg-control-hover"
+                }`}
+                type="button"
+                onClick={() => onResolutionTarget("human")}
+              >
+                <MessageSquare className="mr-1 inline h-4 w-4" />
+                FYI for humans
+              </button>
             </div>
-            <p className="mt-1 px-1 text-xs text-fg-muted">
+            <p className="px-2 py-1 text-xs text-fg-muted">
               {resolutionTarget === "agent"
                 ? "The agent will pull this and act on it."
                 : "Visible context for humans; the agent will not act."}
             </p>
-            <div className="mt-3 flex justify-end">
-              <Button disabled={pending} onClick={onSubmit}>
-                {pending ? "Posting..." : "Post comment"}
-              </Button>
-            </div>
           </div>
+          <Button className="mt-3 w-full" disabled={pending} onClick={onSubmit}>
+            {pending ? "Posting..." : "Post comment"}
+          </Button>
         </>
       )}
     </div>
@@ -3995,8 +3827,8 @@ function ThreadsSidebar({
 
   return (
     <div className="rounded-md border bg-canvas">
-      <div className="flex items-center justify-between rounded-t-md border-b bg-canvas-subtle px-3 py-2">
-        <span className="text-sm font-semibold">Threads</span>
+      <div className="flex items-center justify-between border-b px-4 py-3">
+        <span className="font-semibold">Threads</span>
         <span
           className={`text-xs text-fg-muted transition-opacity ${
             justSynced || reconnecting ? "opacity-100" : "opacity-0"
@@ -4007,9 +3839,9 @@ function ThreadsSidebar({
       </div>
       <div className="divide-y">
         {groups.map((group) => (
-          <section key={group.label} className="p-3">
+          <section key={group.label} className="p-4">
             <button
-              className="mb-2 flex w-full cursor-pointer items-center justify-between rounded-md text-left text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="mb-3 flex w-full items-center justify-between text-left text-sm font-semibold"
               type="button"
               onClick={() =>
                 group.label === "Resolved"
@@ -4019,11 +3851,11 @@ function ThreadsSidebar({
             >
               <span className="flex items-center gap-2">
                 {group.label}
-                <Counter>{group.threads.length}</Counter>
+                <Badge>{group.threads.length}</Badge>
               </span>
               {group.label === "Resolved" ? (
                 <ChevronDown
-                  className={`h-4 w-4 text-fg-muted transition-transform ${showResolved ? "rotate-180" : ""}`}
+                  className={`h-4 w-4 transition-transform ${showResolved ? "rotate-180" : ""}`}
                 />
               ) : null}
             </button>
@@ -4081,108 +3913,103 @@ function ThreadCard({
 }) {
   const author = thread.root.authorName ?? thread.root.authorEmail ?? "Agent";
   const targetId = anchorTargetId(thread.root.anchor);
-  const resolved = thread.root.status === "resolved";
   return (
     <div
       id={`thread-${thread.root.id}`}
-      className={`rounded-md border ${resolved ? "opacity-75" : ""}`}
+      className={`rounded-md border p-3 ${thread.root.status === "resolved" ? "bg-canvas-subtle opacity-75" : "bg-canvas"}`}
     >
-      <div className="flex items-center justify-between gap-2 rounded-t-md border-b bg-canvas-subtle px-3 py-2 text-xs text-fg-muted">
+      <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <Avatar name={author} agent={thread.root.createdBy === "agent"} />
-          <span className="truncate font-semibold text-fg">{author}</span>
-          <span className="shrink-0">
-            <RelativeTime value={thread.root.createdAt} />
-          </span>
+          <div className="min-w-0">
+            <div className="truncate text-sm font-medium">{author}</div>
+            <div className="text-xs text-fg-muted">
+              <RelativeTime value={thread.root.createdAt} />
+            </div>
+          </div>
         </div>
         {!thread.root.consumedAt ? (
           <span
-            className="size-2 shrink-0 rounded-full bg-attention-emphasis"
+            className="mt-1 h-2 w-2 shrink-0 rounded-full bg-attention-emphasis"
             title="Agent has not pulled this yet"
           />
         ) : null}
       </div>
-      <div className="p-3">
-        <a
-          className="inline-flex max-w-full items-center gap-1 rounded-md bg-accent-muted px-1.5 font-mono text-xs leading-5 text-accent-fg transition-colors hover:underline"
-          href={targetId ? `#${targetId}` : "#"}
-          onClick={(event) => {
-            if (!thread.root.anchor) {
-              return;
-            }
-            event.preventDefault();
-            // Push the jump into history so the back button returns here.
-            if (targetId) {
-              window.history.pushState(
-                null,
-                "",
-                `#${encodeURIComponent(targetId)}`,
-              );
-            }
-            scrollToAnchor(thread.root.anchor);
-          }}
-        >
-          {thread.root.detached ? <Badge tone="amber">detached</Badge> : null}
-          <span className="truncate">{thread.root.anchorLabel}</span>
-        </a>
-        <p className="mt-2 text-sm leading-5">{thread.root.message}</p>
-        {thread.replies.length > 0 ? (
-          <div className="mt-3 space-y-2 border-l-2 pl-3">
-            {thread.replies.map((item) => (
-              <div key={item.id} className="text-sm">
-                <div className="text-xs text-fg-muted">
-                  <span className="font-semibold text-fg">
-                    {item.authorName ?? item.authorEmail ?? "Agent"}
-                  </span>{" "}
-                  <RelativeTime value={item.createdAt} />
-                </div>
-                <p className="leading-5">{item.message}</p>
+      <a
+        className="mt-3 inline-flex max-w-full items-center gap-1 rounded-full border bg-canvas-subtle px-2 py-0.5 font-mono text-xs text-fg-muted transition-colors hover:bg-control-hover hover:text-fg"
+        href={targetId ? `#${targetId}` : "#"}
+        onClick={(event) => {
+          if (!thread.root.anchor) {
+            return;
+          }
+          event.preventDefault();
+          // Push the jump into history so the back button returns here.
+          if (targetId) {
+            window.history.pushState(
+              null,
+              "",
+              `#${encodeURIComponent(targetId)}`,
+            );
+          }
+          scrollToAnchor(thread.root.anchor);
+        }}
+      >
+        {thread.root.detached ? <Badge tone="amber">detached</Badge> : null}
+        <span className="truncate">{thread.root.anchorLabel}</span>
+      </a>
+      <p className="mt-2 text-sm leading-6">{thread.root.message}</p>
+      {thread.replies.length > 0 ? (
+        <div className="mt-3 space-y-2 border-l pl-3">
+          {thread.replies.map((item) => (
+            <div key={item.id} className="text-sm">
+              <div className="text-xs text-fg-muted">
+                {item.authorName ?? item.authorEmail ?? "Agent"} ·{" "}
+                <RelativeTime value={item.createdAt} />
               </div>
-            ))}
-          </div>
-        ) : null}
-        {openReply ? (
-          <div className="mt-3 space-y-2">
-            <textarea
-              aria-label="Reply in thread"
-              className="min-h-16 w-full resize-y rounded-md border bg-canvas px-3 py-2 text-sm shadow-input outline-none transition-colors placeholder:text-fg-muted focus-visible:border-focus focus-visible:ring-1 focus-visible:ring-focus"
-              placeholder="Reply in thread"
-              value={reply}
-              onChange={(event) => onReply(event.target.value)}
-            />
-            <div className="flex justify-end">
-              <Button disabled={pendingReply} size="sm" onClick={onSubmitReply}>
-                Post reply
-              </Button>
+              <p>{item.message}</p>
             </div>
-          </div>
-        ) : null}
-        <div className="mt-2 flex items-center justify-between gap-2">
-          <Button size="sm" variant="ghost" onClick={onOpenReply}>
-            Reply
-          </Button>
-          {thread.root.status === "open" ? (
-            <Button
-              aria-label="Resolve thread"
-              size="icon-sm"
-              title="Resolve"
-              variant="ghost"
-              onClick={() => onStatus(thread.root.id, "resolved")}
-            >
-              <Check className="h-4 w-4" />
-            </Button>
-          ) : (
-            <Button
-              aria-label="Reopen thread"
-              size="icon-sm"
-              title="Reopen"
-              variant="ghost"
-              onClick={() => onStatus(thread.root.id, "open")}
-            >
-              <RotateCcw className="h-4 w-4" />
-            </Button>
-          )}
+          ))}
         </div>
+      ) : null}
+      {openReply ? (
+        <div className="mt-3 space-y-2">
+          <textarea
+            aria-label="Reply in thread"
+            className="min-h-16 w-full resize-y rounded-md border bg-canvas p-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            placeholder="Reply in thread"
+            value={reply}
+            onChange={(event) => onReply(event.target.value)}
+          />
+          <Button disabled={pendingReply} size="sm" onClick={onSubmitReply}>
+            Post reply
+          </Button>
+        </div>
+      ) : null}
+      <div className="mt-3 flex items-center justify-between gap-2">
+        <Button size="sm" variant="ghost" onClick={onOpenReply}>
+          Reply
+        </Button>
+        {thread.root.status === "open" ? (
+          <Button
+            aria-label="Resolve thread"
+            size="icon"
+            title="Resolve"
+            variant="ghost"
+            onClick={() => onStatus(thread.root.id, "resolved")}
+          >
+            <Check className="h-4 w-4" />
+          </Button>
+        ) : (
+          <Button
+            aria-label="Reopen thread"
+            size="icon"
+            title="Reopen"
+            variant="ghost"
+            onClick={() => onStatus(thread.root.id, "open")}
+          >
+            <RotateCcw className="h-4 w-4" />
+          </Button>
+        )}
       </div>
     </div>
   );
@@ -4191,13 +4018,13 @@ function ThreadCard({
 function Avatar({ name, agent }: { name: string; agent?: boolean }) {
   if (agent) {
     return (
-      <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-neutral-emphasis text-fg-on-emphasis">
-        <Bot className="h-3 w-3" />
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-neutral-emphasis text-fg-on-emphasis">
+        <Bot className="h-4 w-4" />
       </span>
     );
   }
   return (
-    <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-accent-muted text-[9px] font-semibold text-accent-fg">
+    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent-muted text-xs font-semibold text-accent-fg">
       {initials(name)}
     </span>
   );

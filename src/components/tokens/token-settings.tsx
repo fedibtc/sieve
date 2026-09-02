@@ -93,25 +93,27 @@ export function TokenSettings({
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-[1280px] flex-col gap-6 px-8 py-6">
-      <header className="flex flex-col gap-1 border-b pb-4">
-        <h1 className="flex items-center gap-2 text-2xl font-semibold">
-          <KeyRound className="h-6 w-6 text-fg-muted" />
-          Agent tokens
-        </h1>
-        <p className="max-w-2xl text-sm text-fg-muted">
+    <main className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-8">
+      <header className="flex flex-col gap-2 border-b pb-6">
+        <div className="flex items-center gap-3">
+          <KeyRound className="h-7 w-7" />
+          <h1 className="text-3xl font-semibold tracking-tight">
+            Agent tokens
+          </h1>
+        </div>
+        <p className="max-w-2xl text-fg-muted">
           Mint bearer tokens for the sieve CLI. Tokens are shown once and expire
           after 90 days.
         </p>
       </header>
 
-      <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+      <section className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="flex flex-col gap-5">
           <div className="flex flex-wrap items-end gap-3">
-            <label className="flex min-w-72 flex-1 flex-col gap-2 font-semibold text-sm">
+            <label className="flex min-w-72 flex-1 flex-col gap-2 font-medium text-sm">
               Token name
               <input
-                className="h-8 rounded-md border bg-canvas px-3 font-normal text-sm shadow-input outline-none transition-colors focus-visible:border-focus focus-visible:ring-1 focus-visible:ring-focus"
+                className="h-10 rounded-md border bg-canvas px-3 font-normal text-base outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring"
                 value={name}
                 onChange={(event) => setName(event.target.value)}
               />
@@ -129,11 +131,11 @@ export function TokenSettings({
               ref={calloutRef}
               className="rounded-md border border-attention-border bg-attention-muted p-4"
             >
-              <div className="mb-1 flex items-center gap-2 font-semibold">
-                <KeyRound className="h-4 w-4 text-attention-fg" />
+              <div className="mb-1 flex items-center gap-2 font-semibold text-attention-fg">
+                <KeyRound className="h-4 w-4" />
                 Copy this token now
               </div>
-              <p className="mb-3 text-sm text-fg-muted">
+              <p className="mb-3 text-sm text-attention-fg">
                 This is shown once. Store it in your shell environment or let
                 the CLI store a localhost token with `login --dev`.
               </p>
@@ -145,12 +147,12 @@ export function TokenSettings({
             <table className="w-full border-collapse text-left text-sm">
               <thead className="bg-canvas-subtle text-fg-muted">
                 <tr>
-                  <th className="px-4 py-2 font-semibold">Name</th>
-                  <th className="px-4 py-2 font-semibold">Status</th>
-                  <th className="px-4 py-2 font-semibold">Prefix</th>
-                  <th className="px-4 py-2 font-semibold">Last used</th>
-                  <th className="px-4 py-2 font-semibold">Expires</th>
-                  <th className="w-16 px-4 py-2" />
+                  <th className="px-4 py-3 font-medium">Name</th>
+                  <th className="px-4 py-3 font-medium">Status</th>
+                  <th className="px-4 py-3 font-medium">Prefix</th>
+                  <th className="px-4 py-3 font-medium">Last used</th>
+                  <th className="px-4 py-3 font-medium">Expires</th>
+                  <th className="w-16 px-4 py-3" />
                 </tr>
               </thead>
               <tbody>
@@ -160,7 +162,7 @@ export function TokenSettings({
                     <td className="px-4 py-3">
                       <TokenStatus token={token} />
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs text-fg-muted">
+                    <td className="px-4 py-3 font-mono text-fg-muted">
                       {token.prefix ?? "sieve_"}
                       {token.start ?? ""}
                     </td>
@@ -174,7 +176,7 @@ export function TokenSettings({
                       <button
                         aria-label="Revoke token"
                         title="Revoke token"
-                        className="inline-flex size-7 cursor-pointer items-center justify-center rounded-md border border-btn-border bg-btn text-btn-danger-fg shadow-btn transition-colors hover:border-btn-danger-hover hover:bg-btn-danger-hover hover:text-fg-on-emphasis focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-md border border-btn-border bg-btn text-fg-muted shadow-btn transition-colors hover:bg-btn-hover hover:text-danger-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         disabled={busy}
                         onClick={() => {
                           if (window.confirm("Revoke this token?")) {
@@ -244,15 +246,15 @@ function Snippet({
   const [copied, setCopied] = useState(false);
   return (
     <div className="overflow-hidden rounded-md border bg-canvas">
-      <div className="flex items-center justify-between border-b bg-canvas-subtle px-3 py-2">
-        <h2 className="flex items-center gap-2 text-sm font-semibold">
+      <div className="flex items-center justify-between border-b px-3 py-2">
+        <h2 className="flex items-center gap-2 text-sm font-medium">
           {icon}
           {title}
         </h2>
         <button
           aria-label={`Copy ${title}`}
           title={`Copy ${title}`}
-          className="inline-flex size-7 cursor-pointer items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-control-hover hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-control-hover hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onClick={() => {
             void navigator.clipboard.writeText(value);
             setCopied(true);
@@ -267,7 +269,7 @@ function Snippet({
           )}
         </button>
       </div>
-      <pre className="overflow-x-auto whitespace-pre-wrap p-3 font-mono text-xs leading-5">
+      <pre className="overflow-x-auto whitespace-pre-wrap p-3 font-mono text-xs leading-6">
         <code>{value}</code>
       </pre>
     </div>
@@ -277,14 +279,14 @@ function Snippet({
 function CopyRow({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
   return (
-    <div className="flex items-stretch rounded-md border bg-canvas">
-      <code className="min-w-0 flex-1 overflow-x-auto px-3 py-2 font-mono text-xs leading-5">
+    <div className="flex items-stretch rounded-md border border-attention-border bg-canvas">
+      <code className="min-w-0 flex-1 overflow-x-auto px-3 py-2 font-mono text-sm">
         {value}
       </code>
       <button
         aria-label="Copy token"
         title="Copy token"
-        className="inline-flex w-9 cursor-pointer items-center justify-center border-l text-fg-muted transition-colors hover:bg-control-hover hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="inline-flex w-11 cursor-pointer items-center justify-center border-attention-border border-l transition-colors hover:bg-attention-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         onClick={() => {
           void navigator.clipboard.writeText(value);
           setCopied(true);
