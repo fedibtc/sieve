@@ -38,7 +38,7 @@ test("seeded reviewer journey composes read-only interactions", async ({
   await page.getByRole("button", { name: "Expand all" }).click();
   await expect(
     page.getByRole("button", { exact: true, name: "unified" }),
-  ).toHaveClass(/bg-primary/);
+  ).toHaveAttribute("aria-pressed", "true");
 
   // Authored annotations read inline beside their lines without hovering.
   await expect(

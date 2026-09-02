@@ -3,30 +3,38 @@
 import { diffLines } from "diff";
 import { common, createLowlight } from "lowlight";
 import {
+  Archive,
   Bot,
   Check,
   ChevronDown,
+  ChevronRight,
   ChevronsDownUp,
   ChevronsUpDown,
-  Code2,
+  CircleCheck,
   Database,
   ExternalLink,
-  FileCode2,
+  FileDiff,
   Folder,
-  GitBranch,
   GitCompareArrows,
+  GitPullRequestArrow,
   Image as ImageIcon,
+  Info,
   MessageSquare,
+  MessageSquareWarning,
+  OctagonAlert,
+  Plus,
   Radio,
   RotateCcw,
   Send,
   TableProperties,
+  TriangleAlert,
+  UnfoldVertical,
   Video,
   X,
 } from "lucide-react";
 import Image from "next/image";
-import Link from "next/link";
 import {
+  type CSSProperties,
   createContext,
   Fragment,
   type ReactNode,
@@ -40,8 +48,9 @@ import {
 } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { useColorScheme } from "@/components/color-mode";
 import { RelativeTime } from "@/components/relative-time";
-import { Badge, type BadgeTone } from "@/components/ui/badge";
+import { Badge, type BadgeTone, Counter } from "@/components/ui/badge";
 import { emphasizeRanges, intralineRanges } from "@/lib/intraline";
 import type { ReviewAnchor } from "@/shared/anchors";
 import type {
@@ -55,6 +64,13 @@ import { Button } from "../ui/button";
 const lowlight = createLowlight(common);
 const DIFF_VIEW_MODE_STORAGE_KEY = "sieve:diff-view-mode";
 const SPLIT_DIFF_MIN_WIDTH = 760;
+// github's diff grid: 50px gutters that widen with the line count, 20px rows
+const UNIFIED_ROW =
+  "grid min-w-[560px] grid-cols-[var(--diff-gutter)_var(--diff-gutter)_minmax(0,1fr)]";
+const SPLIT_ROW =
+  "grid min-w-[760px] grid-cols-[var(--diff-gutter)_minmax(0,1fr)_var(--diff-gutter)_minmax(0,1fr)]";
+const CODE_ROW =
+  "grid min-w-[560px] grid-cols-[var(--diff-gutter)_minmax(0,1fr)]";
 
 type Review = {
   id: string;
@@ -275,105 +291,112 @@ export function ReviewDetail({
   }
 
   return (
-    <main className="min-h-screen bg-background text-foreground">
-      <header className="border-b bg-background">
-        <div className="mx-auto flex w-full max-w-[1600px] items-start justify-between gap-6 px-6 py-5">
-          <div>
-            <Link
-              className="text-sm text-muted-foreground transition-colors hover:text-foreground"
-              href="/reviews"
-            >
-              Reviews /
-            </Link>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight">
+    <main className="min-h-screen bg-canvas text-fg">
+      <header className="border-b bg-canvas">
+        <div className="mx-auto w-full max-w-[1600px] px-8 pb-4 pt-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
+            <h1 className="min-w-0 break-words text-[32px] font-normal leading-10">
               {review.title}
+              {review.prNumber ? (
+                <span className="ml-2 font-light text-fg-muted">
+                  #{review.prNumber}
+                </span>
+              ) : null}
             </h1>
-            {review.summary ? (
-              <p className="mt-2 max-w-3xl text-base text-muted-foreground">
-                {review.summary}
-              </p>
-            ) : null}
-            <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-              <span className="inline-flex items-center gap-1 rounded-full border bg-card px-2 py-0.5 font-mono text-xs">
-                {review.repo}
-              </span>
-              <span className="inline-flex items-center gap-1 rounded-full border bg-card px-2 py-0.5 font-mono text-xs">
-                <GitBranch className="h-3 w-3" />
-                {review.branch}
-              </span>
-              <StatusBadge status={review.status} />
-              <span className="inline-flex items-center rounded-full border bg-card px-2 py-0.5 font-mono text-xs">
-                v{review.contentVersion}
-              </span>
+            <div className="flex shrink-0 flex-wrap gap-2 sm:pt-1">
+              {review.status === "approved" ||
+              review.status === "changes_requested" ? (
+                <Button
+                  variant="outline"
+                  onClick={() => setReviewStatus("open")}
+                >
+                  <RotateCcw className="h-4 w-4" />
+                  Reopen
+                </Button>
+              ) : confirmApprove ? (
+                <div className="flex items-center gap-2 rounded-md border bg-canvas-subtle p-1">
+                  <span className="px-2 text-sm text-fg-muted">
+                    Approve review?
+                  </span>
+                  <Button size="sm" onClick={() => setReviewStatus("approved")}>
+                    Confirm
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setConfirmApprove(false)}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  <Button
+                    variant="danger"
+                    onClick={() => setReviewStatus("changes_requested")}
+                  >
+                    <X className="h-4 w-4" />
+                    Request changes
+                  </Button>
+                  <Button onClick={() => setConfirmApprove(true)}>
+                    <Check className="h-4 w-4" />
+                    Approve
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-2 text-sm text-fg-muted">
+            <StatePill status={review.status} />
+            <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
               {review.origin === "derived" ? (
-                <span className="inline-flex items-center gap-1 rounded-full border bg-card px-2 py-0.5 text-xs">
-                  <GitCompareArrows className="h-3 w-3" />
+                <span className="inline-flex items-center gap-1">
+                  <GitCompareArrows className="h-4 w-4" />
                   derived from the diff
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1 rounded-full border bg-card px-2 py-0.5 text-xs">
-                  <Bot className="h-3 w-3" />
+                <span className="inline-flex items-center gap-1 font-semibold">
+                  <Bot className="h-4 w-4" />
                   {review.agentName ?? "authored"}
                 </span>
               )}
+              <span>published v{review.contentVersion} of</span>
+              <CommitRef>{review.branch}</CommitRef>
+              {review.baseRef ? (
+                <>
+                  <span>against</span>
+                  <CommitRef>{review.baseRef}</CommitRef>
+                </>
+              ) : null}
+              <span>in</span>
+              <span className="font-mono text-xs text-fg">{review.repo}</span>
+              <span aria-hidden>·</span>
               <RelativeTime prefix="updated" value={review.updatedAt} />
               {review.prUrl ? (
-                <a
-                  className="inline-flex items-center gap-1 rounded-md border bg-card px-2 py-1 text-xs font-medium transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  href={review.prUrl}
-                  rel="noreferrer"
-                  target="_blank"
-                >
-                  PR #{review.prNumber ?? "?"}
-                  <ExternalLink className="h-3 w-3" />
-                </a>
+                <>
+                  <span aria-hidden>·</span>
+                  <a
+                    className="inline-flex items-center gap-1 text-accent-fg hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    href={review.prUrl}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    PR #{review.prNumber ?? "?"}
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </a>
+                </>
               ) : null}
-            </div>
+            </span>
           </div>
-          <div className="flex shrink-0 gap-2">
-            {review.status === "approved" ||
-            review.status === "changes_requested" ? (
-              <Button variant="outline" onClick={() => setReviewStatus("open")}>
-                <RotateCcw className="h-4 w-4" />
-                Reopen
-              </Button>
-            ) : confirmApprove ? (
-              <div className="flex items-center gap-2 rounded-md border bg-card p-1">
-                <span className="px-2 text-sm text-muted-foreground">
-                  Approve review?
-                </span>
-                <Button size="sm" onClick={() => setReviewStatus("approved")}>
-                  Confirm
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setConfirmApprove(false)}
-                >
-                  Cancel
-                </Button>
-              </div>
-            ) : (
-              <>
-                <Button
-                  className="border-amber-300 text-amber-800 hover:bg-amber-50"
-                  variant="outline"
-                  onClick={() => setReviewStatus("changes_requested")}
-                >
-                  <X className="h-4 w-4" />
-                  Request changes
-                </Button>
-                <Button onClick={() => setConfirmApprove(true)}>
-                  <Check className="h-4 w-4" />
-                  Approve
-                </Button>
-              </>
-            )}
-          </div>
+          {review.summary ? (
+            <p className="mt-3 max-w-3xl text-base text-fg-muted">
+              {review.summary}
+            </p>
+          ) : null}
         </div>
       </header>
 
-      <div className="mx-auto grid w-full max-w-[1600px] grid-cols-1 gap-8 px-6 py-8 lg:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="mx-auto grid w-full max-w-[1600px] grid-cols-1 gap-6 px-8 py-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <TextSelectionToolbar
           selection={textSelection}
           onComment={(anchor) => setActiveAnchor(anchor)}
@@ -388,7 +411,7 @@ export function ReviewDetail({
             }}
           />
         </section>
-        <aside className="max-h-[calc(100vh-5rem)] space-y-4 overflow-y-auto lg:sticky lg:top-20">
+        <aside className="max-h-[calc(100vh-4rem)] space-y-4 overflow-y-auto lg:sticky lg:top-16">
           <Composer
             anchor={activeAnchor}
             message={message}
@@ -432,7 +455,7 @@ function TextSelectionToolbar({
 
   return (
     <button
-      className="fixed z-50 inline-flex items-center gap-1 rounded-full border bg-card px-3 py-1.5 text-sm font-medium shadow-lg transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="fixed z-50 inline-flex h-7 items-center gap-1 rounded-md border border-btn-border bg-btn px-3 text-xs font-medium text-btn-fg shadow-resting transition-colors hover:bg-btn-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       style={{
         left: selection.rect.left,
         top: selection.rect.top,
@@ -616,7 +639,7 @@ function EvidenceCode({
 
   return (
     <button
-      className="cursor-pointer rounded bg-muted px-1 py-0.5 font-mono text-[0.85em] text-foreground underline decoration-dotted underline-offset-2 transition-colors hover:bg-primary/10 hover:decoration-solid"
+      className="cursor-pointer rounded-md bg-neutral-muted px-[0.4em] py-[0.2em] font-mono text-[85%] text-accent-fg transition-colors hover:underline"
       type="button"
       title={evidenceLinkTitle(label)}
       onClick={() => links.onJump(blockId)}
@@ -906,7 +929,7 @@ function EvidenceGroup({
         <div className="flex items-center justify-between gap-3">
           {aside ? (
             <h2
-              className="text-sm font-semibold text-muted-foreground"
+              className="text-sm font-semibold text-fg-muted"
               data-block-id={heading?.id}
               data-text-anchorable={heading ? "true" : undefined}
               id={heading?.id}
@@ -984,13 +1007,79 @@ function evidenceFindingLabels(block: EvidenceBlockData) {
   return [...new Set(labels)].slice(0, 3);
 }
 
-function severityChipClass(severity: BlockSeverity) {
-  const classes = {
-    blocking: "bg-red-100 text-red-800",
-    minor: "bg-slate-200 text-slate-700",
-    fyi: "bg-slate-200 text-slate-700",
-  };
-  return classes[severity];
+function severityTone(severity: BlockSeverity): BadgeTone {
+  return severity === "blocking" ? "red" : "neutral";
+}
+
+// github's diffstat: five blocks split by the addition share
+function Diffstat({
+  additions,
+  deletions,
+}: {
+  additions: number;
+  deletions: number;
+}) {
+  const total = additions + deletions;
+  let added = 0;
+  let deleted = 0;
+  if (total > 0 && total <= 5) {
+    added = additions;
+    deleted = deletions;
+  } else if (total > 5) {
+    added = Math.round((additions / total) * 5);
+    deleted = Math.min(5 - added, Math.round((deletions / total) * 5));
+  }
+  const blocks = [
+    ...Array.from({ length: added }, () => "bg-success-emphasis"),
+    ...Array.from({ length: deleted }, () => "bg-danger-emphasis"),
+    ...Array.from(
+      { length: 5 - added - deleted },
+      () => "border border-border-muted bg-neutral-muted",
+    ),
+  ];
+  return (
+    <span
+      aria-hidden
+      className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-fg-muted"
+    >
+      {total}
+      <span className="inline-flex gap-px">
+        {blocks.map((block, index) => (
+          <span
+            // biome-ignore lint/suspicious/noArrayIndexKey: fixed five-block strip
+            key={index}
+            className={`size-2 ${block}`}
+          />
+        ))}
+      </span>
+    </span>
+  );
+}
+
+function DiffViewSwitch() {
+  const view = useContext(DiffViewContext);
+  return (
+    <div className="hidden h-7 items-center rounded-md bg-neutral-muted p-0.5 sm:flex">
+      {(["split", "unified"] as const).map((item) => {
+        const active = view.mode === item;
+        return (
+          <button
+            key={item}
+            aria-pressed={active}
+            className={`h-6 cursor-pointer rounded-[5px] border px-2 text-xs leading-5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+              active
+                ? "border-border bg-canvas font-semibold text-fg shadow-resting"
+                : "border-transparent text-fg hover:bg-control-hover"
+            }`}
+            type="button"
+            onClick={() => view.setMode(item)}
+          >
+            {item}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 function EvidenceCard({
@@ -1006,7 +1095,6 @@ function EvidenceCard({
   onAnchor: (anchor: ReviewAnchor) => void;
   onToggle: () => void;
 }) {
-  const view = useContext(DiffViewContext);
   const stats = keyChangeStats(block);
   const lineCount =
     block.type === "annotated-code" ? block.data.code.split("\n").length : null;
@@ -1023,33 +1111,58 @@ function EvidenceCard({
   return (
     <article
       id={block.id}
-      className="group scroll-mt-16 overflow-clip rounded-lg border bg-card"
+      className="group scroll-mt-16 overflow-clip rounded-md border bg-canvas"
       data-severity={block.severity}
     >
       <div
-        className={`sticky top-12 z-[5] flex items-center gap-3 rounded-t-lg bg-muted px-3 py-2 ${
+        className={`sticky top-12 z-[5] flex items-start gap-2 rounded-t-md bg-canvas-subtle px-2 py-1 ${
           open ? "border-b" : ""
         }`}
         data-diff-header
       >
         <button
           aria-expanded={open}
-          className="group/toggle -m-1 flex min-w-0 flex-1 cursor-pointer items-start gap-2 rounded-md p-1 text-left transition-colors hover:bg-foreground/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="group/toggle flex min-w-0 flex-1 cursor-pointer items-start gap-1 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           title={open ? "Collapse evidence" : "Expand evidence"}
           type="button"
           onClick={onToggle}
         >
-          <ChevronDown
-            className={`mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-all group-hover/toggle:translate-y-0.5 group-hover/toggle:text-foreground ${
-              open
-                ? ""
-                : "-rotate-90 group-hover/toggle:translate-y-0 group-hover/toggle:translate-x-0.5"
-            }`}
-          />
-          <span className="min-w-0">
+          <span className="flex h-8 w-[22px] shrink-0 items-center justify-center text-fg-muted transition-colors group-hover/toggle:text-accent-fg">
+            {open ? (
+              <ChevronDown className="h-4 w-4" />
+            ) : (
+              <ChevronRight className="h-4 w-4" />
+            )}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="flex min-h-8 items-center gap-2">
+              {stats ? (
+                <Diffstat
+                  additions={stats.additions}
+                  deletions={stats.deletions}
+                />
+              ) : null}
+              <span className="min-w-0 truncate font-mono text-xs text-fg">
+                {block.data.filename}
+              </span>
+              {block.severity ? (
+                <Badge className="shrink-0" tone={severityTone(block.severity)}>
+                  {block.severity}
+                </Badge>
+              ) : null}
+              {findings.map((label) => (
+                <Badge
+                  key={label}
+                  className="hidden shrink-0 md:inline-flex"
+                  tone="violet"
+                >
+                  {label}
+                </Badge>
+              ))}
+            </span>
             {claim ? (
               <span
-                className={`block text-sm font-medium leading-5 ${
+                className={`block pb-1.5 text-sm leading-5 text-fg ${
                   open ? "" : "line-clamp-2"
                 }`}
                 data-block-id={block.id}
@@ -1058,85 +1171,41 @@ function EvidenceCard({
                 {claim}
               </span>
             ) : null}
-            <span
-              className={`flex items-center gap-2 font-mono text-xs text-muted-foreground ${
-                claim ? "mt-1" : ""
-              }`}
-            >
-              {block.type === "diff" ? (
-                <FileCode2 className="h-3.5 w-3.5 shrink-0" />
-              ) : (
-                <Code2 className="h-3.5 w-3.5 shrink-0" />
-              )}
-              <span className="truncate">{block.data.filename}</span>
-              {block.severity ? (
-                <span
-                  className={`shrink-0 rounded-full px-1.5 py-0.5 font-sans text-[10px] font-semibold ${severityChipClass(
-                    block.severity,
-                  )}`}
-                >
-                  {block.severity}
-                </span>
-              ) : null}
-              {findings.map((label) => (
-                <span
-                  key={label}
-                  className="shrink-0 rounded-full bg-violet-100 px-1.5 py-0.5 font-sans text-[10px] font-semibold text-violet-800"
-                >
-                  {label}
-                </span>
-              ))}
-            </span>
           </span>
         </button>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex h-8 shrink-0 items-center gap-2">
           {threads.length > 0 ? (
             <button
-              className="inline-flex cursor-pointer items-center gap-1 rounded-full border bg-card px-2 py-0.5 text-xs font-medium text-amber-700 transition-colors hover:bg-amber-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="inline-flex h-5 cursor-pointer items-center gap-1 rounded-full bg-neutral-muted px-1.5 text-xs font-medium text-fg-muted transition-colors hover:text-accent-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               title={`${threads.length} anchored thread${threads.length === 1 ? "" : "s"}`}
               type="button"
               onClick={() => scrollToThread(threads[0]?.root.id)}
             >
-              <MessageSquare className="h-3 w-3" />
+              <MessageSquare className="h-3.5 w-3.5" />
               {threads.length}
             </button>
           ) : null}
           {stats ? (
             <span className="font-mono text-xs">
-              <span className="text-emerald-700">+{stats.additions}</span>{" "}
-              <span className="text-red-700">-{stats.deletions}</span>
+              <span className="text-success-fg">+{stats.additions}</span>{" "}
+              <span className="text-danger-fg">-{stats.deletions}</span>
             </span>
           ) : lineCount !== null ? (
-            <span className="font-mono text-xs text-muted-foreground">
+            <span className="font-mono text-xs text-fg-muted">
               {lineCount} lines
             </span>
           ) : null}
           {open && block.type === "diff" && !isOneSided ? (
-            <div className="hidden rounded-md border bg-card p-0.5 sm:flex">
-              {(["split", "unified"] as const).map((item) => (
-                <button
-                  key={item}
-                  className={`cursor-pointer rounded px-2 py-1 text-xs transition-colors ${
-                    view.mode === item
-                      ? "bg-primary text-primary-foreground"
-                      : "text-muted-foreground hover:bg-accent"
-                  }`}
-                  type="button"
-                  onClick={() => view.setMode(item)}
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
+            <DiffViewSwitch />
           ) : null}
           <button
             aria-label="Comment on block"
-            className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-full border bg-card text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100"
+            className="inline-flex size-7 cursor-pointer items-center justify-center rounded-md text-fg-muted opacity-0 transition-opacity hover:bg-control-hover hover:text-fg focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100"
             title="Comment on block"
             type="button"
             onClick={() => onAnchor({ blockId: block.id, kind: "block" })}
           >
-            <MessageSquare className="h-3.5 w-3.5" />
+            <MessageSquare className="h-4 w-4" />
           </button>
         </div>
       </div>
@@ -1199,7 +1268,7 @@ function CommentableBlock({
       block.type !== "image-diff" &&
       !(block.type === "rich-text" && isAside(block)) ? (
         <p
-          className="mb-2 text-sm font-medium leading-6"
+          className="mb-2 text-sm font-semibold leading-6"
           data-block-id={block.id}
           data-text-anchorable="true"
         >
@@ -1209,7 +1278,7 @@ function CommentableBlock({
       <div className="absolute right-1 top-1 z-10 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
         {threads.length > 0 ? (
           <button
-            className="inline-flex h-8 items-center gap-1 rounded-full border bg-card px-2 text-xs font-medium text-amber-700 shadow-sm transition-colors hover:bg-amber-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="inline-flex h-7 items-center gap-1 rounded-md border border-btn-border bg-btn px-2 text-xs font-medium text-btn-fg shadow-btn transition-colors hover:bg-btn-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             title={`${threads.length} anchored thread${threads.length === 1 ? "" : "s"}`}
             type="button"
             onClick={() => scrollToThread(threads[0]?.root.id)}
@@ -1220,7 +1289,7 @@ function CommentableBlock({
         ) : null}
         <button
           aria-label="Comment on block"
-          className="inline-flex h-8 w-8 items-center justify-center rounded-full border bg-card text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="inline-flex size-7 items-center justify-center rounded-md border border-btn-border bg-btn text-fg-muted shadow-btn transition-colors hover:bg-btn-hover hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           title="Comment on block"
           type="button"
           onClick={() => onAnchor({ blockId: block.id, kind: "block" })}
@@ -1289,13 +1358,13 @@ function BlockRenderer({
     // cases only cover a stray block outside any evidence run.
     case "diff":
       return (
-        <div className="overflow-clip rounded-lg border bg-card">
+        <div className="overflow-clip rounded-md border bg-canvas">
           <DiffBlockBody block={block} threads={threads} onAnchor={onAnchor} />
         </div>
       );
     case "annotated-code":
       return (
-        <div className="overflow-clip rounded-lg border bg-card">
+        <div className="overflow-clip rounded-md border bg-canvas">
           <AnnotatedCodeBody
             block={block}
             threads={threads}
@@ -1309,9 +1378,9 @@ function BlockRenderer({
           {block.data.entities.map((entity) => (
             <div
               key={entity.name}
-              className="overflow-hidden rounded-xl border bg-card"
+              className="overflow-hidden rounded-md border bg-canvas"
             >
-              <div className="flex items-center justify-between gap-3 border-b bg-muted/40 px-3 py-2">
+              <div className="flex items-center justify-between gap-3 border-b bg-canvas-subtle px-3 py-2">
                 <h3 className="flex items-center gap-2 font-mono text-sm font-semibold">
                   <Database className="h-4 w-4 text-muted-foreground" />
                   {entity.name}
@@ -1354,7 +1423,7 @@ function BlockRenderer({
             </div>
           ))}
           {block.data.relations?.length ? (
-            <div className="rounded-xl border bg-card p-3 text-sm md:col-span-2">
+            <div className="rounded-md border bg-canvas p-3 text-sm md:col-span-2">
               <h3 className="mb-2 flex items-center gap-2 font-medium">
                 <TableProperties className="h-4 w-4 text-muted-foreground" />
                 Relations
@@ -1408,30 +1477,39 @@ function BlockRenderer({
   }
 }
 
+// github's markdown alerts: a colored left rule and a titled first line
 function CalloutBlock({
   block,
 }: {
   block: Extract<ReviewBlock, { type: "callout" }>;
 }) {
   const recommendation = block.data.recommendation;
+  const tone = calloutTone(block.data.tone);
+  const ToneIcon = tone.Icon;
   return (
     <div
-      className={`rounded-lg border border-l-4 px-4 py-3 ${calloutToneClass(
-        block.data.tone,
-      )}`}
+      className={`border-l-4 py-2 pl-4 pr-3 ${tone.border}`}
       data-block-id={block.id}
       data-text-anchorable="true"
     >
-      {recommendation ? (
+      <div className="mb-2 flex flex-wrap items-center gap-3">
         <span
-          className={`mb-2 inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${
-            recommendationBadge(recommendation).className
-          }`}
-          data-recommendation={recommendation}
+          className={`inline-flex items-center gap-2 text-sm font-medium leading-5 ${tone.text}`}
         >
-          {recommendationBadge(recommendation).label}
+          <ToneIcon className="h-4 w-4" />
+          {tone.title}
         </span>
-      ) : null}
+        {recommendation ? (
+          <span
+            className={`inline-flex items-center gap-1 rounded-full px-2.5 text-xs font-medium leading-5 text-fg-on-emphasis ${
+              recommendationBadge(recommendation).className
+            }`}
+            data-recommendation={recommendation}
+          >
+            {recommendationBadge(recommendation).label}
+          </span>
+        ) : null}
+      </div>
       <div className="recap-prose max-w-[58rem]">
         <ReactMarkdown
           components={markdownComponents}
@@ -1465,39 +1543,35 @@ function FoldedProse({
 
   return (
     <section
-      className="overflow-clip rounded-lg border bg-card"
+      className="overflow-clip rounded-md border bg-canvas"
       data-folded-prose
       data-severity={block.severity}
     >
       <button
         aria-expanded={open}
-        className={`group/prose flex w-full cursor-pointer items-center gap-2 bg-muted px-3 py-2 text-left transition-colors hover:bg-foreground/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+        className={`group/prose flex min-h-10 w-full cursor-pointer items-center gap-2 bg-canvas-subtle px-2 py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
           open ? "border-b" : ""
         }`}
         title={open ? "Collapse the notes" : "Expand the notes"}
         type="button"
         onClick={() => setOpen((value) => !value)}
       >
-        <ChevronDown
-          className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover/prose:text-foreground ${
-            open ? "" : "-rotate-90"
-          }`}
-        />
+        <span className="flex w-[22px] shrink-0 items-center justify-center text-fg-muted transition-colors group-hover/prose:text-accent-fg">
+          {open ? (
+            <ChevronDown className="h-4 w-4" />
+          ) : (
+            <ChevronRight className="h-4 w-4" />
+          )}
+        </span>
         <span
-          className="min-w-0 flex-1 text-sm font-medium leading-5"
+          className="min-w-0 flex-1 text-sm leading-5"
           data-block-id={block.id}
           data-text-anchorable="true"
         >
           {block.summary ?? "Notes"}
         </span>
         {block.severity ? (
-          <span
-            className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${severityChipClass(
-              block.severity,
-            )}`}
-          >
-            {block.severity}
-          </span>
+          <Badge tone={severityTone(block.severity)}>{block.severity}</Badge>
         ) : null}
       </button>
       {open ? (
@@ -1520,34 +1594,59 @@ function FoldedProse({
 
 function recommendationBadge(recommendation: ReviewRecommendation) {
   const badges = {
-    merge: { label: "Merge", className: "bg-emerald-100 text-emerald-800" },
+    merge: { label: "Merge", className: "bg-success-emphasis" },
     "merge-with-nits": {
       label: "Merge with nits",
-      className: "bg-emerald-100 text-emerald-800",
+      className: "bg-success-emphasis",
     },
     "needs-changes": {
       label: "Needs changes",
-      className: "bg-amber-100 text-amber-900",
+      className: "bg-danger-emphasis",
     },
     "cannot-judge-alone": {
       label: "Can't judge alone",
-      className: "bg-slate-200 text-slate-700",
+      className: "bg-neutral-emphasis",
     },
   };
   return badges[recommendation];
 }
 
-function calloutToneClass(
+function calloutTone(
   tone: "info" | "decision" | "risk" | "warning" | "success",
 ) {
-  const classes = {
-    info: "border-blue-300 bg-blue-50/70",
-    decision: "border-violet-300 bg-violet-50/70",
-    risk: "border-red-300 bg-red-50/70",
-    warning: "border-amber-300 bg-amber-50/70",
-    success: "border-emerald-300 bg-emerald-50/70",
+  const tones = {
+    info: {
+      title: "Note",
+      border: "border-l-accent-emphasis",
+      text: "text-accent-fg",
+      Icon: Info,
+    },
+    decision: {
+      title: "Decision",
+      border: "border-l-done-emphasis",
+      text: "text-done-fg",
+      Icon: MessageSquareWarning,
+    },
+    risk: {
+      title: "Risk",
+      border: "border-l-danger-emphasis",
+      text: "text-danger-fg",
+      Icon: OctagonAlert,
+    },
+    warning: {
+      title: "Warning",
+      border: "border-l-attention-emphasis",
+      text: "text-attention-fg",
+      Icon: TriangleAlert,
+    },
+    success: {
+      title: "Success",
+      border: "border-l-success-emphasis",
+      text: "text-success-fg",
+      Icon: CircleCheck,
+    },
   };
-  return classes[tone];
+  return tones[tone];
 }
 
 function ApiEndpointBlock({
@@ -1560,12 +1659,12 @@ function ApiEndpointBlock({
   const [expanded, setExpanded] = useState(false);
   return (
     <div
-      className={`overflow-hidden border bg-card ${
-        compactWithPrevious ? "rounded-t-none border-t-0" : "rounded-lg"
+      className={`overflow-hidden border bg-canvas ${
+        compactWithPrevious ? "rounded-t-none border-t-0" : "rounded-md"
       }`}
     >
       <button
-        className="grid w-full grid-cols-[24px_auto_minmax(0,1fr)_auto] items-center gap-2 bg-muted/30 px-3 py-2 text-left transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="grid w-full grid-cols-[24px_auto_minmax(0,1fr)_auto] items-center gap-2 bg-canvas-subtle px-3 py-2 text-left transition-colors hover:bg-control-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         type="button"
         onClick={() => setExpanded((value) => !value)}
       >
@@ -1613,7 +1712,7 @@ function ApiEndpointBlock({
                             <span>→</span>{" "}
                           </>
                         ) : null}
-                        <span className="rounded border bg-muted px-1.5 py-0.5">
+                        <span className="rounded-md bg-neutral-muted px-1.5 py-0.5">
                           {param.type ?? "-"}
                         </span>
                       </td>
@@ -1643,26 +1742,47 @@ function ApiEndpointBlock({
   );
 }
 
-function StatusBadge({
+// github's State pill in the pull request palette
+function StatePill({
   status,
 }: {
   status: "open" | "approved" | "changes_requested" | "archived";
 }) {
+  const states = {
+    open: {
+      label: "Open",
+      className: "bg-success-emphasis",
+      Icon: GitPullRequestArrow,
+    },
+    approved: { label: "Approved", className: "bg-done-emphasis", Icon: Check },
+    changes_requested: {
+      label: "Changes requested",
+      className: "bg-danger-emphasis",
+      Icon: FileDiff,
+    },
+    archived: {
+      label: "Archived",
+      className: "bg-neutral-emphasis",
+      Icon: Archive,
+    },
+  };
+  const state = states[status];
+  const StateIcon = state.Icon;
   return (
-    <Badge
-      className="capitalize"
-      tone={
-        status === "open"
-          ? "blue"
-          : status === "approved"
-            ? "green"
-            : status === "changes_requested"
-              ? "amber"
-              : "neutral"
-      }
+    <span
+      className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-sm font-medium leading-5 text-fg-on-emphasis ${state.className}`}
     >
-      {status.replace("_", " ")}
-    </Badge>
+      <StateIcon className="h-4 w-4" />
+      {state.label}
+    </span>
+  );
+}
+
+function CommitRef({ children }: { children: ReactNode }) {
+  return (
+    <span className="rounded-md bg-accent-muted px-1 font-mono text-xs leading-5 text-accent-fg">
+      {children}
+    </span>
   );
 }
 
@@ -1677,7 +1797,7 @@ function ChangeShapeBlock({
     1,
   );
   return (
-    <div className="overflow-hidden rounded-lg border bg-card">
+    <div className="overflow-hidden rounded-md border bg-canvas">
       {areas.map((area) => {
         const churn = area.additions + area.deletions;
         // Bars are proportional to each area's churn share, with a floor so
@@ -1696,21 +1816,21 @@ function ChangeShapeBlock({
             <span className="w-14 shrink-0 text-xs text-muted-foreground">
               {area.files} {area.files === 1 ? "file" : "files"}
             </span>
-            <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+            <div className="h-2 flex-1 overflow-hidden rounded-full bg-neutral-muted">
               <div
                 className="flex h-full overflow-hidden rounded-full"
                 style={{ width: `${width}%` }}
               >
                 <div
-                  className="h-full bg-emerald-500/80"
+                  className="h-full bg-success-emphasis"
                   style={{ width: `${addedShare}%` }}
                 />
-                <div className="h-full flex-1 bg-red-500/70" />
+                <div className="h-full flex-1 bg-danger-emphasis" />
               </div>
             </div>
             <span className="shrink-0 font-mono text-xs">
-              <span className="text-emerald-700">+{area.additions}</span>{" "}
-              <span className="text-red-700">-{area.deletions}</span>
+              <span className="text-success-fg">+{area.additions}</span>{" "}
+              <span className="text-danger-fg">-{area.deletions}</span>
             </span>
           </div>
         );
@@ -1789,7 +1909,7 @@ function FileTreeBlock({
 
   if (entries.length <= 15) {
     return (
-      <div className="overflow-hidden rounded-lg border bg-card">
+      <div className="overflow-hidden rounded-md border bg-canvas">
         {entries.map((entry) => (
           <FileTreeRow
             key={entry.path}
@@ -1809,13 +1929,13 @@ function FileTreeBlock({
   }
 
   return (
-    <div className="overflow-hidden rounded-lg border bg-card">
+    <div className="overflow-hidden rounded-md border bg-canvas">
       {Array.from(groups.entries()).map(([group, groupEntries]) => {
         const open = openGroups.has(group);
         return (
           <section key={group} className="border-b last:border-b-0">
             <button
-              className="flex w-full items-center justify-between gap-3 bg-muted/40 px-3 py-2 text-left text-sm font-medium transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="flex w-full items-center justify-between gap-3 bg-canvas-subtle px-3 py-2 text-left text-sm font-medium transition-colors hover:bg-control-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               type="button"
               onClick={() =>
                 setOpenGroups((current) => {
@@ -1833,7 +1953,7 @@ function FileTreeBlock({
                 <Folder className="h-4 w-4 text-muted-foreground" />
                 <span className="font-mono">{group}</span>
               </span>
-              <Badge>{groupEntries.length}</Badge>
+              <Counter>{groupEntries.length}</Counter>
             </button>
             {open
               ? groupEntries.map((entry) => (
@@ -1874,8 +1994,8 @@ function FileTreeRow({
         ) : null}
       </span>
       <span className="text-right font-mono text-xs">
-        <span className="text-emerald-700">+{entry.additions ?? 0}</span>{" "}
-        <span className="text-red-700">-{entry.deletions ?? 0}</span>
+        <span className="text-success-fg">+{entry.additions ?? 0}</span>{" "}
+        <span className="text-danger-fg">-{entry.deletions ?? 0}</span>
       </span>
     </>
   );
@@ -1885,7 +2005,7 @@ function FileTreeRow({
         {entry.patch ? (
           <button
             aria-expanded={expanded}
-            className="grid min-w-0 flex-1 cursor-pointer grid-cols-[36px_minmax(0,1fr)_110px] items-center gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="grid min-w-0 flex-1 cursor-pointer grid-cols-[36px_minmax(0,1fr)_110px] items-center gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-canvas-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             title={expanded ? "Hide the full patch" : "Show the full patch"}
             type="button"
             onClick={() => setExpanded((current) => !current)}
@@ -1914,7 +2034,7 @@ function FileTreeRow({
         </button>
         {entry.patch ? (
           <button
-            className="flex shrink-0 cursor-pointer items-center gap-1 px-3 text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex shrink-0 cursor-pointer items-center gap-1 px-3 text-xs text-fg-muted transition-colors hover:bg-canvas-subtle hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             type="button"
             aria-expanded={expanded}
             onClick={() => setExpanded((current) => !current)}
@@ -1963,20 +2083,20 @@ function PatchPanel({ attachmentId }: { attachmentId: string }) {
 
   if (error) {
     return (
-      <div className="border-t bg-muted/20 px-3 py-2 text-xs text-red-700">
+      <div className="border-t bg-canvas-subtle px-3 py-2 text-xs text-danger-fg">
         Could not load the full patch: {error}
       </div>
     );
   }
   if (patch === null) {
     return (
-      <div className="border-t bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+      <div className="border-t bg-canvas-subtle px-3 py-2 text-xs text-fg-muted">
         Loading patch…
       </div>
     );
   }
   return (
-    <pre className="max-h-96 overflow-auto border-t bg-muted/20 px-3 py-2 font-mono text-xs leading-5">
+    <pre className="max-h-96 overflow-auto border-t bg-canvas px-3 py-2 font-mono text-xs leading-5">
       {patch.split("\n").map((line, index) => (
         <div
           // biome-ignore lint/suspicious/noArrayIndexKey: patch lines are static once fetched
@@ -1992,16 +2112,16 @@ function PatchPanel({ attachmentId }: { attachmentId: string }) {
 
 function patchLineClass(line: string) {
   if (line.startsWith("+++") || line.startsWith("---")) {
-    return "text-muted-foreground";
+    return "text-fg-muted";
   }
   if (line.startsWith("@@")) {
-    return "text-blue-700";
+    return "bg-diff-hunk-line text-fg-muted";
   }
   if (line.startsWith("+")) {
-    return "bg-emerald-50/60 text-emerald-800";
+    return "bg-diff-add-line";
   }
   if (line.startsWith("-")) {
-    return "bg-red-50/60 text-red-800";
+    return "bg-diff-del-line";
   }
   if (
     line.startsWith("diff --git") ||
@@ -2021,13 +2141,13 @@ function topLevelDirectory(path: string) {
 
 function fieldToneClass(change?: "added" | "modified" | "removed") {
   if (change === "added") {
-    return "border-l-2 border-l-emerald-400 bg-emerald-50/60";
+    return "border-l-2 border-l-success-emphasis bg-success-muted";
   }
   if (change === "removed") {
-    return "border-l-2 border-l-red-400 bg-red-50/60 text-muted-foreground line-through";
+    return "border-l-2 border-l-danger-emphasis bg-danger-muted text-fg-muted line-through";
   }
   if (change === "modified") {
-    return "border-l-2 border-l-blue-400 bg-blue-50/60";
+    return "border-l-2 border-l-accent-emphasis bg-accent-muted";
   }
   return "";
 }
@@ -2036,7 +2156,7 @@ function JsonExample({ title, value }: { title: string; value: unknown }) {
   const json = JSON.stringify(value, null, 2);
   return (
     <div className="border-t">
-      <div className="bg-muted/30 px-3 py-1.5 font-mono text-xs text-muted-foreground">
+      <div className="bg-canvas-subtle px-3 py-1.5 font-mono text-xs text-fg-muted">
         {title}
       </div>
       <pre className="overflow-x-auto px-3 py-2 font-mono text-xs leading-5">
@@ -2090,9 +2210,9 @@ function QuestionCard({
   }
 
   return (
-    <div className="rounded-xl border bg-card p-4">
+    <div className="rounded-md border bg-canvas p-4">
       <div className="flex gap-3">
-        <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border bg-muted text-sm font-medium">
+        <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-neutral-muted text-sm font-medium">
           {index + 1}
         </span>
         <div className="min-w-0 flex-1">
@@ -2100,7 +2220,7 @@ function QuestionCard({
           {question.mode === "freeform" ? (
             <textarea
               aria-label={question.prompt}
-              className="mt-3 min-h-24 w-full resize-y rounded-md border bg-card p-3 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring"
+              className="mt-3 min-h-24 w-full resize-y rounded-md border bg-canvas px-3 py-2 text-sm shadow-input outline-none transition-colors focus-visible:border-focus focus-visible:ring-1 focus-visible:ring-focus"
               value={freeform}
               onChange={(event) => setFreeform(event.target.value)}
             />
@@ -2111,14 +2231,16 @@ function QuestionCard({
                 return (
                   <button
                     key={option}
-                    className={`flex items-center gap-2 rounded-lg border p-3 text-left text-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                      active ? "border-primary bg-primary/10" : "bg-card"
+                    className={`flex items-center gap-2 rounded-md border p-3 text-left text-sm transition-colors hover:bg-canvas-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                      active
+                        ? "border-accent-emphasis bg-accent-muted"
+                        : "bg-canvas"
                     }`}
                     type="button"
                     onClick={() => toggle(option)}
                   >
                     <Radio
-                      className={`h-4 w-4 ${active ? "fill-primary text-primary" : "text-muted-foreground"}`}
+                      className={`h-4 w-4 ${active ? "fill-accent-fg text-accent-fg" : "text-fg-muted"}`}
                     />
                     {option}
                   </button>
@@ -2144,7 +2266,7 @@ function QuestionCard({
                 <p
                   // biome-ignore lint/suspicious/noArrayIndexKey: repeated identical answers are display-only history.
                   key={`${answeredIndex}:${answered}`}
-                  className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground"
+                  className="rounded-md bg-canvas-subtle px-3 py-2 text-sm text-fg-muted"
                 >
                   Answered: {answered}
                 </p>
@@ -2201,13 +2323,13 @@ function ImageDiffBlock({
     return (
       <figure
         key={image.label}
-        className={`min-w-0 overflow-hidden rounded-md border bg-card ${
-          image.tone === "diff" ? "border-amber-300 bg-amber-50/30" : ""
+        className={`min-w-0 overflow-hidden rounded-md border bg-canvas ${
+          image.tone === "diff" ? "border-attention-emphasis" : ""
         }`}
         data-visual-panel={image.label}
       >
         <button
-          className="block w-full cursor-zoom-in bg-muted/40 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="block w-full cursor-zoom-in bg-canvas-subtle transition-colors hover:bg-control-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           type="button"
           onClick={() =>
             setExpanded({
@@ -2230,7 +2352,7 @@ function ImageDiffBlock({
         </button>
         <figcaption
           className={`border-t px-3 py-1.5 text-center text-sm font-medium ${
-            image.tone === "diff" ? "text-amber-800" : "text-muted-foreground"
+            image.tone === "diff" ? "text-attention-fg" : "text-fg-muted"
           }`}
         >
           {image.label}
@@ -2241,25 +2363,27 @@ function ImageDiffBlock({
 
   return (
     <section
-      className="overflow-clip rounded-lg border bg-card"
+      className="overflow-clip rounded-md border bg-canvas"
       data-severity={block.severity}
       data-visual-comparison
     >
       <button
         aria-expanded={open}
-        className={`group/visual flex w-full cursor-pointer items-center gap-3 bg-muted px-3 py-2 text-left transition-colors hover:bg-foreground/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+        className={`group/visual flex min-h-10 w-full cursor-pointer items-center gap-2 bg-canvas-subtle px-2 py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
           open ? "border-b" : ""
         }`}
         title={open ? "Collapse the comparison" : "Expand the comparison"}
         type="button"
         onClick={() => setOpen((value) => !value)}
       >
-        <ChevronDown
-          className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover/visual:text-foreground ${
-            open ? "" : "-rotate-90"
-          }`}
-        />
-        <ImageIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="flex w-[22px] shrink-0 items-center justify-center text-fg-muted transition-colors group-hover/visual:text-accent-fg">
+          {open ? (
+            <ChevronDown className="h-4 w-4" />
+          ) : (
+            <ChevronRight className="h-4 w-4" />
+          )}
+        </span>
+        <ImageIcon className="h-4 w-4 shrink-0 text-fg-muted" />
         <span className="min-w-0 flex-1">
           {block.summary ? (
             <span className="block text-sm font-medium leading-5">
@@ -2267,8 +2391,8 @@ function ImageDiffBlock({
             </span>
           ) : null}
           <span
-            className={`block truncate text-xs text-muted-foreground ${
-              block.summary ? "mt-0.5" : "text-sm font-medium text-foreground"
+            className={`block truncate font-mono text-xs text-fg-muted ${
+              block.summary ? "mt-0.5" : "text-fg"
             }`}
             title={
               block.data.baseline
@@ -2304,7 +2428,7 @@ function ImageDiffBlock({
           type="button"
           onClick={() => setExpanded(null)}
         >
-          <span className="absolute right-4 top-4 inline-flex h-10 w-10 items-center justify-center rounded-full bg-white text-neutral-950">
+          <span className="absolute right-4 top-4 inline-flex h-10 w-10 items-center justify-center rounded-full bg-canvas text-fg">
             <X className="h-5 w-5" />
           </span>
           <Image
@@ -2328,11 +2452,11 @@ function ScreenRecordingBlock({
 }) {
   return (
     <section
-      className="overflow-hidden rounded-lg border bg-card"
+      className="overflow-hidden rounded-md border bg-canvas"
       data-screen-recording
     >
-      <div className="flex items-start gap-3 border-b px-4 py-3">
-        <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-foreground text-background">
+      <div className="flex items-start gap-3 border-b bg-canvas-subtle px-4 py-3">
+        <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-neutral-emphasis text-fg-on-emphasis">
           <Video className="h-4 w-4" />
         </span>
         <div className="min-w-0">
@@ -2458,6 +2582,10 @@ function DiffBlockBody({
     () => buildDiffDisplayRows(rows, annotations, threads, expandedGroups),
     [rows, annotations, threads, expandedGroups],
   );
+  const lastLine = rows.reduce(
+    (max, row) => Math.max(max, row.beforeLine ?? 0, row.afterLine ?? 0),
+    0,
+  );
   function toggleGroup(id: string) {
     setExpandedGroups((current) => {
       const next = new Set(current);
@@ -2471,7 +2599,10 @@ function DiffBlockBody({
   }
   return (
     <div ref={codeSurfaceRef} className="min-w-0" data-diff-code>
-      <div className="overflow-x-auto font-mono text-[0.75rem] leading-5">
+      <div
+        className="overflow-x-auto font-mono text-xs leading-5"
+        style={gutterStyle(lastLine)}
+      >
         {displayRows.map((item) =>
           item.type === "collapse" ? (
             <CollapsedDiffRow
@@ -2487,7 +2618,6 @@ function DiffBlockBody({
               key={`annotation:${item.annotation.marker}`}
               annotation={item.annotation}
               blockId={block.id}
-              unified={unified}
             />
           ) : unified ? (
             <UnifiedDiffRow
@@ -2537,12 +2667,26 @@ function SplitDiffRow({
 }) {
   const emphasis =
     row.kind === "modify" ? intralineRanges(row.before, row.after) : null;
+  const beforeTone =
+    row.kind === "remove" || row.kind === "modify"
+      ? "remove"
+      : row.kind === "add"
+        ? "empty"
+        : "context";
+  const afterTone =
+    row.kind === "add" || row.kind === "modify"
+      ? "add"
+      : row.kind === "remove"
+        ? "empty"
+        : "context";
   return (
-    <div className="grid min-w-[760px] grid-cols-[64px_minmax(0,1fr)_64px_minmax(0,1fr)] border-b last:border-b-0">
+    <div className={`diff-row ${SPLIT_ROW}`}>
       <LineButton
         id={lineTargetId(block.id, "before", row.beforeLine)}
         line={row.beforeLine}
         side="before"
+        tone={beforeTone}
+        plus
         threadIds={lineThreadIds(threads, "before", row.beforeLine)}
         marker={annotationMarkerStartingAt(
           annotations,
@@ -2562,22 +2706,24 @@ function SplitDiffRow({
         }
       />
       <CodeCell
+        side="before"
         tokens={
           row.beforeIndex === undefined
             ? []
             : highlightedBefore[row.beforeIndex]
         }
-        tone={
-          row.kind === "remove" || row.kind === "modify" ? "remove" : "context"
-        }
+        tone={beforeTone}
         value={row.before}
-        sign={row.kind === "remove" || row.kind === "modify" ? "-" : " "}
+        sign={beforeTone === "remove" ? "-" : undefined}
         emphasis={emphasis?.before}
       />
       <LineButton
         id={lineTargetId(block.id, "after", row.afterLine)}
         line={row.afterLine}
         side="after"
+        tone={afterTone}
+        plus
+        divider
         threadIds={lineThreadIds(threads, "after", row.afterLine)}
         marker={annotationMarkerStartingAt(annotations, "after", row.afterLine)}
         annotated={lineHasAnnotation(annotations, "after", row.afterLine)}
@@ -2593,12 +2739,13 @@ function SplitDiffRow({
         }
       />
       <CodeCell
+        side="after"
         tokens={
           row.afterIndex === undefined ? [] : highlightedAfter[row.afterIndex]
         }
-        tone={row.kind === "add" || row.kind === "modify" ? "add" : "context"}
+        tone={afterTone}
         value={row.after}
-        sign={row.kind === "add" || row.kind === "modify" ? "+" : " "}
+        sign={afterTone === "add" ? "+" : undefined}
         emphasis={emphasis?.after}
       />
     </div>
@@ -2689,6 +2836,8 @@ function UnifiedDiffRow({
   );
 }
 
+// github's unified rows keep both line-number columns; the absent side is a
+// blank cell in the row's tint
 function UnifiedDiffLine({
   block,
   row,
@@ -2714,28 +2863,36 @@ function UnifiedDiffLine({
   onAnchor: (anchor: ReviewAnchor) => void;
   emphasis?: Array<[number, number]>;
 }) {
-  const line = side === "before" ? row.beforeLine : row.afterLine;
+  const beforeLine = tone === "add" ? undefined : row.beforeLine;
+  const afterLine = tone === "remove" ? undefined : row.afterLine;
+  const gutter = (gutterSide: "before" | "after", line?: number) => (
+    <LineButton
+      id={lineTargetId(block.id, gutterSide, line)}
+      line={line}
+      side={gutterSide}
+      tone={tone}
+      plus={gutterSide === side}
+      threadIds={lineThreadIds(threads, gutterSide, line)}
+      marker={annotationMarkerStartingAt(annotations, gutterSide, line)}
+      annotated={lineHasAnnotation(annotations, gutterSide, line)}
+      onClick={() =>
+        line
+          ? onAnchor({
+              blockId: block.id,
+              kind: "line",
+              filePath: block.data.filename,
+              line: { side: gutterSide, start: line },
+            })
+          : undefined
+      }
+    />
+  );
   return (
-    <div className="grid min-w-[560px] grid-cols-[64px_minmax(0,1fr)] border-b last:border-b-0">
-      <LineButton
-        id={lineTargetId(block.id, side, line)}
-        line={line}
-        threadIds={lineThreadIds(threads, side, line)}
-        marker={annotationMarkerStartingAt(annotations, side, line)}
-        annotated={lineHasAnnotation(annotations, side, line)}
-        side={side}
-        onClick={() =>
-          line
-            ? onAnchor({
-                blockId: block.id,
-                kind: "line",
-                filePath: block.data.filename,
-                line: { side, start: line },
-              })
-            : undefined
-        }
-      />
+    <div className={`diff-row ${UNIFIED_ROW}`} data-side={side}>
+      {gutter("before", beforeLine)}
+      {gutter("after", afterLine)}
       <CodeCell
+        side={side}
         tokens={tokens}
         tone={tone}
         sign={sign}
@@ -2781,7 +2938,10 @@ function AnnotatedCodeBody({
   const visibleLines = expanded ? lines : lines.slice(0, previewCount);
   return (
     <div className="min-w-0">
-      <div className="overflow-x-auto font-mono text-[0.75rem] leading-5">
+      <div
+        className="overflow-x-auto font-mono text-xs leading-5"
+        style={gutterStyle(startLine + lines.length - 1)}
+      >
         {visibleLines.map((line, index) => {
           const lineNumber = startLine + index;
           const endingAnnotations = annotations.filter(
@@ -2789,7 +2949,7 @@ function AnnotatedCodeBody({
           );
           return (
             <Fragment key={`${lineNumber}:${line}`}>
-              <div className="grid min-w-[560px] grid-cols-[64px_minmax(0,1fr)] border-b last:border-b-0">
+              <div className={`diff-row ${CODE_ROW}`}>
                 <LineButton
                   id={lineTargetId(block.id, "after", lineNumber)}
                   line={lineNumber}
@@ -2805,6 +2965,8 @@ function AnnotatedCodeBody({
                     lineNumber,
                   )}
                   side="after"
+                  tone="context"
+                  plus
                   onClick={() =>
                     onAnchor({
                       blockId: block.id,
@@ -2815,6 +2977,7 @@ function AnnotatedCodeBody({
                   }
                 />
                 <CodeCell
+                  side="after"
                   tokens={highlightedLines[index]}
                   tone="context"
                   value={line}
@@ -2825,24 +2988,35 @@ function AnnotatedCodeBody({
                   key={`annotation:${annotation.marker}`}
                   annotation={annotation}
                   blockId={block.id}
-                  unified
                 />
               ))}
             </Fragment>
           );
         })}
+        {!expanded && lines.length > visibleLines.length ? (
+          <button
+            className={`group/hunk w-full cursor-pointer text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${CODE_ROW}`}
+            type="button"
+            onClick={() => setExpanded(true)}
+          >
+            <span className="flex items-center justify-center bg-diff-hunk-num text-fg-muted transition-colors group-hover/hunk:bg-diff-hunk-num-hover group-hover/hunk:text-fg-on-emphasis">
+              <UnfoldVertical className="h-4 w-4" />
+            </span>
+            <span className="bg-diff-hunk-line py-1 pl-[22px] pr-[10px] text-xs leading-5 text-fg-muted">
+              Show all {lines.length} lines
+            </span>
+          </button>
+        ) : null}
       </div>
-      {!expanded && lines.length > visibleLines.length ? (
-        <button
-          className="w-full border-t bg-muted/40 px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted"
-          type="button"
-          onClick={() => setExpanded(true)}
-        >
-          Show all {lines.length} lines
-        </button>
-      ) : null}
     </div>
   );
+}
+
+function gutterStyle(lastLine: number) {
+  const digits = String(Math.max(lastLine, 1)).length;
+  return {
+    "--diff-gutter": `${Math.max(50, 20 + digits * 7.5)}px`,
+  } as CSSProperties;
 }
 
 type DiffDisplayRow =
@@ -3086,30 +3260,43 @@ function CollapsedDiffRow({
 }) {
   const range =
     startLine !== undefined && endLine !== undefined
-      ? ` (${startLine}–${endLine})`
+      ? ` (${startLine}\u2013${endLine})`
       : "";
   return (
     <button
-      className={`grid w-full min-w-[560px] border-y bg-muted/40 text-center text-xs font-medium text-muted-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-        unified
-          ? "grid-cols-[64px_minmax(0,1fr)]"
-          : "grid-cols-[64px_minmax(0,1fr)_64px_minmax(0,1fr)]"
+      className={`group/hunk w-full cursor-pointer text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${
+        unified ? UNIFIED_ROW : SPLIT_ROW
       }`}
       type="button"
       onClick={onExpand}
     >
-      <span />
-      <span className={unified ? "px-3 py-2" : "col-span-3 px-3 py-2"}>
-        · {count} unchanged lines{range} ·
+      <span
+        className={`flex items-center justify-center bg-diff-hunk-num text-fg-muted transition-colors group-hover/hunk:bg-diff-hunk-num-hover group-hover/hunk:text-fg-on-emphasis ${
+          unified ? "col-span-2" : ""
+        }`}
+      >
+        <UnfoldVertical className="h-4 w-4" />
+      </span>
+      <span
+        className={`bg-diff-hunk-line py-1 pl-[22px] pr-[10px] text-xs leading-5 text-fg-muted ${
+          unified ? "" : "col-span-3"
+        }`}
+      >
+        {count} unchanged lines{range}
       </span>
     </button>
   );
 }
 
+type CellTone = "context" | "add" | "remove" | "empty";
+
 function LineButton({
   id,
   line,
   side,
+  tone,
+  plus,
+  divider,
   threadIds,
   marker,
   annotated,
@@ -3118,18 +3305,32 @@ function LineButton({
   id?: string;
   line?: number;
   side: "before" | "after";
+  tone: CellTone;
+  plus?: boolean;
+  divider?: boolean;
   threadIds: string[];
   marker?: number;
   annotated?: boolean;
   onClick: () => void;
 }) {
   const count = threadIds.length;
+  const numClass =
+    tone === "add"
+      ? "bg-diff-add-num text-fg"
+      : tone === "remove"
+        ? "bg-diff-del-num text-fg"
+        : tone === "empty"
+          ? "bg-diff-empty text-fg-muted"
+          : "bg-canvas text-fg-muted";
   return (
     <button
       id={id}
-      className="group/gutter relative flex items-center justify-end gap-1 bg-muted/60 px-2 py-1 text-right tabular-nums text-muted-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className={`relative flex h-full min-h-5 cursor-pointer items-center justify-end gap-1 px-[10px] text-right text-xs leading-5 tabular-nums transition-colors hover:text-fg disabled:cursor-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${numClass} ${
+        divider ? "border-l" : ""
+      }`}
+      data-side={side}
       disabled={!line}
-      title={`Comment on ${side} line ${line}`}
+      title={line ? `Comment on ${side} line ${line}` : undefined}
       type="button"
       onClick={() => {
         if (count > 0) {
@@ -3140,26 +3341,30 @@ function LineButton({
       }}
     >
       {marker ? (
-        <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-violet-100 text-[10px] font-semibold text-violet-800">
+        <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-done-muted px-1 text-[10px] font-semibold text-done-fg">
           {marker}
         </span>
       ) : null}
       {count ? (
-        <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-1 text-[10px] font-semibold text-amber-800">
+        <span className="inline-flex h-4 items-center gap-0.5 rounded-full bg-neutral-muted px-1 text-[10px] font-semibold text-fg-muted">
           <MessageSquare className="h-3 w-3" />
           {count}
         </span>
       ) : null}
       <span>{line ?? ""}</span>
-      {line ? (
-        <span className="ml-1 hidden text-primary group-hover/gutter:inline">
-          +
+      {plus && line ? (
+        <span
+          aria-hidden
+          className="add-line-comment absolute -right-[11px] top-[-1px] z-10 flex size-[22px] items-center justify-center rounded-md bg-accent-emphasis text-fg-on-emphasis shadow-resting"
+          data-plus={side}
+        >
+          <Plus className="h-4 w-4" strokeWidth={2.5} />
         </span>
       ) : null}
       {annotated ? (
         <span
           aria-hidden
-          className="absolute inset-y-0 right-0 w-[3px] bg-violet-300"
+          className="absolute inset-y-0 right-0 w-[3px] bg-done-emphasis"
           data-annotation-bracket
         />
       ) : null}
@@ -3171,48 +3376,47 @@ function CodeCell({
   value,
   tone,
   sign,
+  side,
   tokens,
   emphasis,
 }: {
   value: string;
-  tone: "context" | "add" | "remove";
+  tone: CellTone;
   sign?: string;
+  side: "before" | "after";
   tokens?: HighlightLine;
   emphasis?: Array<[number, number]>;
 }) {
   const toneClass =
     tone === "add"
-      ? "bg-emerald-50/70 text-emerald-950"
+      ? "bg-diff-add-line"
       : tone === "remove"
-        ? "bg-red-50/70 text-red-950"
-        : "bg-card";
+        ? "bg-diff-del-line"
+        : tone === "empty"
+          ? "bg-diff-empty"
+          : "bg-canvas";
   const baseTokens = tokens && tokens.length > 0 ? tokens : [{ text: value }];
   const displayTokens = emphasis?.length
     ? emphasizeRanges(baseTokens, emphasis)
     : baseTokens;
   const emphasisClass =
     tone === "add"
-      ? "rounded-sm bg-emerald-200/80"
+      ? "rounded-[0.2em] bg-diff-add-word"
       : tone === "remove"
-        ? "rounded-sm bg-red-200/70"
+        ? "rounded-[0.2em] bg-diff-del-word"
         : "";
   return (
     <code
-      className={`flex min-w-0 overflow-hidden whitespace-pre-wrap px-3 py-1 ${toneClass}`}
+      className={`relative block min-w-0 overflow-hidden whitespace-pre-wrap break-words pl-[22px] pr-[10px] text-fg ${toneClass}`}
       data-diff-code-cell
+      data-side={side}
     >
-      <span
-        className={`mr-2 w-3 shrink-0 ${
-          sign === "+"
-            ? "text-emerald-700"
-            : sign === "-"
-              ? "text-red-700"
-              : "text-muted-foreground"
-        }`}
-      >
-        {sign ?? " "}
-      </span>
-      <span className="syntax-highlight min-w-0 break-words">
+      {sign && sign !== " " ? (
+        <span aria-hidden className="absolute left-2 top-0 select-none">
+          {sign}
+        </span>
+      ) : null}
+      <span className="syntax-highlight">
         {renderHighlightLine(displayTokens, emphasisClass)}
       </span>
     </code>
@@ -3266,45 +3470,31 @@ function annotationRangeLabel(annotation: {
   return annotation.side === "before" ? `old ${range}` : range;
 }
 
+// github's inline review comment: a muted band holding a bordered note
 function AnnotationCard({
   annotation,
   blockId,
-  unified,
 }: {
   annotation: NumberedAnnotation;
   blockId: string;
-  unified: boolean;
 }) {
   return (
     <div
-      className={`grid border-b last:border-b-0 ${
-        unified
-          ? "min-w-[560px] grid-cols-[64px_minmax(0,1fr)]"
-          : "min-w-[760px] grid-cols-[64px_minmax(0,1fr)_64px_minmax(0,1fr)]"
-      }`}
+      className="min-w-[560px] border-y bg-canvas-subtle px-4 py-2 font-sans"
       data-diff-annotation={annotation.marker}
     >
-      <span className="bg-muted/60" />
-      <div
-        className={`border-l-[3px] border-l-violet-300 bg-violet-50/50 px-3 py-2 font-sans ${
-          unified ? "" : "col-span-3"
-        }`}
-      >
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-violet-100 font-semibold text-violet-800">
+      <div className="max-w-[780px] rounded-md border bg-canvas">
+        <div className="flex flex-wrap items-center gap-2 px-3 pt-2 text-xs text-fg-muted">
+          <span className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-done-muted px-1 font-semibold text-done-fg">
             {annotation.marker}
           </span>
           {annotation.label ? (
-            <span className="font-semibold text-violet-900">
-              {annotation.label}
-            </span>
+            <span className="font-semibold text-fg">{annotation.label}</span>
           ) : null}
-          <span className="text-violet-700">
-            {annotationRangeLabel(annotation)}
-          </span>
+          <span>{annotationRangeLabel(annotation)}</span>
         </div>
         <p
-          className="mt-1 max-w-[58rem] text-sm leading-6"
+          className="px-3 pb-2 pt-1 text-sm leading-5 text-fg"
           data-block-id={blockId}
           data-text-anchorable="true"
         >
@@ -3491,6 +3681,7 @@ function MermaidBlock({
   const [svg, setSvg] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const scheme = useColorScheme();
   useEffect(() => {
     let cancelled = false;
     setSvg("");
@@ -3500,7 +3691,7 @@ function MermaidBlock({
         mermaid.initialize({
           securityLevel: "strict",
           startOnLoad: false,
-          theme: "neutral",
+          theme: scheme === "dark" ? "dark" : "neutral",
           // sanitizeSvg strips foreignObject, which is where html labels
           // live, so diagrams must label with svg text.
           htmlLabels: false,
@@ -3526,15 +3717,15 @@ function MermaidBlock({
     return () => {
       cancelled = true;
     };
-  }, [source]);
+  }, [source, scheme]);
 
   return (
-    <figure className="group relative rounded-lg border bg-card p-4">
+    <figure className="group relative rounded-md border bg-canvas p-4">
       {svg ? (
         <>
           <button
             aria-label="Expand diagram"
-            className="absolute right-3 top-3 z-10 inline-flex h-8 w-8 items-center justify-center rounded-full border bg-card/90 text-muted-foreground opacity-0 shadow-sm transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100"
+            className="absolute right-3 top-3 z-10 inline-flex size-7 items-center justify-center rounded-md border border-btn-border bg-btn text-fg-muted opacity-0 shadow-btn transition-opacity hover:bg-btn-hover hover:text-fg focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100"
             title="Expand diagram"
             type="button"
             onClick={() => setExpanded(true)}
@@ -3551,8 +3742,10 @@ function MermaidBlock({
           />
         </>
       ) : error ? (
-        <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
-          <div className="font-medium">Diagram could not be rendered</div>
+        <div className="rounded-md border border-danger-border bg-danger-muted p-3 text-sm text-fg">
+          <div className="font-medium text-danger-fg">
+            Diagram could not be rendered
+          </div>
           <p className="mt-1">{error}</p>
           <details className="mt-2">
             <summary className="cursor-pointer">Source</summary>
@@ -3562,10 +3755,10 @@ function MermaidBlock({
           </details>
         </div>
       ) : (
-        <div className="h-56 animate-pulse rounded-md bg-muted" />
+        <div className="h-56 animate-pulse rounded-md bg-canvas-subtle" />
       )}
       {caption ? (
-        <figcaption className="mt-3 text-center text-sm text-muted-foreground">
+        <figcaption className="mt-3 text-center text-sm text-fg-muted">
           {caption}
         </figcaption>
       ) : null}
@@ -3576,12 +3769,12 @@ function MermaidBlock({
           type="button"
           onClick={() => setExpanded(false)}
         >
-          <span className="absolute right-4 top-4 inline-flex h-10 w-10 items-center justify-center rounded-full bg-white text-neutral-950">
+          <span className="absolute right-4 top-4 inline-flex h-10 w-10 items-center justify-center rounded-full bg-canvas text-fg">
             <X className="h-5 w-5" />
           </span>
           <span
             aria-label={caption ?? "Mermaid diagram"}
-            className="max-h-full max-w-full overflow-auto rounded-lg bg-white p-6 [&_svg]:h-auto [&_svg]:max-h-[calc(100vh-6rem)] [&_svg]:max-w-[calc(100vw-6rem)]"
+            className="max-h-full max-w-full overflow-auto rounded-md bg-canvas p-6 [&_svg]:h-auto [&_svg]:max-h-[calc(100vh-6rem)] [&_svg]:max-w-[calc(100vw-6rem)]"
             role="img"
             // SVG diagrams must be injected inline so viewBox sizing works.
             // biome-ignore lint/security/noDangerouslySetInnerHtml: SVG diagrams must be injected inline so viewBox sizing works.
@@ -3645,10 +3838,10 @@ function Composer({
   }, [message, anchor]);
 
   return (
-    <div className="rounded-lg border bg-card p-4 shadow-sm">
+    <div className="rounded-md border bg-canvas">
       {!expanded ? (
         <button
-          className="w-full rounded-md border bg-background px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="block w-full cursor-text rounded-md px-3 py-2 text-left text-sm text-fg-muted transition-colors hover:bg-canvas-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           type="button"
           onClick={() => setExpanded(true)}
         >
@@ -3656,10 +3849,10 @@ function Composer({
         </button>
       ) : (
         <>
-          <div className="mb-3 flex items-center justify-between gap-3 text-sm">
-            <span className="font-medium">New comment</span>
+          <div className="flex items-center justify-between gap-3 rounded-t-md border-b bg-canvas-subtle px-3 py-2 text-sm">
+            <span className="font-semibold">New comment</span>
             <button
-              className="inline-flex min-w-0 items-center gap-1 rounded-full border bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="inline-flex min-w-0 items-center gap-1 rounded-md bg-accent-muted px-1.5 font-mono text-xs leading-5 text-accent-fg transition-colors hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               title="Clear anchor"
               type="button"
               onClick={() => onAnchor(null)}
@@ -3668,48 +3861,55 @@ function Composer({
               {anchor ? <X className="h-3 w-3" /> : null}
             </button>
           </div>
-          <textarea
-            aria-label="Comment text"
-            className="min-h-28 w-full resize-y rounded-md border bg-card p-3 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring"
-            value={message}
-            onChange={(event) => onMessage(event.target.value)}
-          />
-          <div className="mt-3 rounded-lg border bg-muted/30 p-1">
-            <div className="grid grid-cols-2 gap-1 text-sm">
-              <button
-                className={`rounded-md px-3 py-2 transition-colors ${
-                  resolutionTarget === "agent"
-                    ? "bg-card text-foreground shadow-sm"
-                    : "text-muted-foreground hover:bg-accent"
-                }`}
-                type="button"
-                onClick={() => onResolutionTarget("agent")}
-              >
-                <Bot className="mr-1 inline h-4 w-4" />
-                Agent should fix
-              </button>
-              <button
-                className={`rounded-md px-3 py-2 transition-colors ${
-                  resolutionTarget === "human"
-                    ? "bg-card text-foreground shadow-sm"
-                    : "text-muted-foreground hover:bg-accent"
-                }`}
-                type="button"
-                onClick={() => onResolutionTarget("human")}
-              >
-                <MessageSquare className="mr-1 inline h-4 w-4" />
-                FYI for humans
-              </button>
+          <div className="p-3">
+            <textarea
+              aria-label="Comment text"
+              className="min-h-28 w-full resize-y rounded-md border bg-canvas px-3 py-2 text-sm shadow-input outline-none transition-colors placeholder:text-fg-muted focus-visible:border-focus focus-visible:ring-1 focus-visible:ring-focus"
+              placeholder="Leave a comment"
+              value={message}
+              onChange={(event) => onMessage(event.target.value)}
+            />
+            <div className="mt-3 grid h-8 grid-cols-2 gap-0.5 rounded-md bg-neutral-muted p-0.5 text-sm">
+              {(
+                [
+                  { target: "agent", label: "Agent should fix", Icon: Bot },
+                  {
+                    target: "human",
+                    label: "FYI for humans",
+                    Icon: MessageSquare,
+                  },
+                ] as const
+              ).map(({ target, label: targetLabel, Icon }) => {
+                const active = resolutionTarget === target;
+                return (
+                  <button
+                    key={target}
+                    aria-pressed={active}
+                    className={`inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-[5px] border px-2 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                      active
+                        ? "border-border bg-canvas font-semibold text-fg shadow-resting"
+                        : "border-transparent text-fg hover:bg-control-hover"
+                    }`}
+                    type="button"
+                    onClick={() => onResolutionTarget(target)}
+                  >
+                    <Icon className="h-4 w-4 text-fg-muted" />
+                    {targetLabel}
+                  </button>
+                );
+              })}
             </div>
-            <p className="px-2 py-1 text-xs text-muted-foreground">
+            <p className="mt-1 px-1 text-xs text-fg-muted">
               {resolutionTarget === "agent"
                 ? "The agent will pull this and act on it."
                 : "Visible context for humans; the agent will not act."}
             </p>
+            <div className="mt-3 flex justify-end">
+              <Button disabled={pending} onClick={onSubmit}>
+                {pending ? "Posting..." : "Post comment"}
+              </Button>
+            </div>
           </div>
-          <Button className="mt-3 w-full" disabled={pending} onClick={onSubmit}>
-            {pending ? "Posting..." : "Post comment"}
-          </Button>
         </>
       )}
     </div>
@@ -3794,11 +3994,11 @@ function ThreadsSidebar({
   ];
 
   return (
-    <div className="rounded-lg border bg-card shadow-sm">
-      <div className="flex items-center justify-between border-b px-4 py-3">
-        <span className="font-semibold">Threads</span>
+    <div className="rounded-md border bg-canvas">
+      <div className="flex items-center justify-between rounded-t-md border-b bg-canvas-subtle px-3 py-2">
+        <span className="text-sm font-semibold">Threads</span>
         <span
-          className={`text-xs text-muted-foreground transition-opacity ${
+          className={`text-xs text-fg-muted transition-opacity ${
             justSynced || reconnecting ? "opacity-100" : "opacity-0"
           }`}
         >
@@ -3807,9 +4007,9 @@ function ThreadsSidebar({
       </div>
       <div className="divide-y">
         {groups.map((group) => (
-          <section key={group.label} className="p-4">
+          <section key={group.label} className="p-3">
             <button
-              className="mb-3 flex w-full items-center justify-between text-left text-sm font-semibold"
+              className="mb-2 flex w-full cursor-pointer items-center justify-between rounded-md text-left text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               type="button"
               onClick={() =>
                 group.label === "Resolved"
@@ -3819,18 +4019,18 @@ function ThreadsSidebar({
             >
               <span className="flex items-center gap-2">
                 {group.label}
-                <Badge>{group.threads.length}</Badge>
+                <Counter>{group.threads.length}</Counter>
               </span>
               {group.label === "Resolved" ? (
                 <ChevronDown
-                  className={`h-4 w-4 transition-transform ${showResolved ? "rotate-180" : ""}`}
+                  className={`h-4 w-4 text-fg-muted transition-transform ${showResolved ? "rotate-180" : ""}`}
                 />
               ) : null}
             </button>
             {group.collapsed ? null : (
               <div className="space-y-3">
                 {group.threads.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">Nothing here.</p>
+                  <p className="text-sm text-fg-muted">Nothing here.</p>
                 ) : (
                   group.threads.map((thread) => (
                     <ThreadCard
@@ -3881,103 +4081,108 @@ function ThreadCard({
 }) {
   const author = thread.root.authorName ?? thread.root.authorEmail ?? "Agent";
   const targetId = anchorTargetId(thread.root.anchor);
+  const resolved = thread.root.status === "resolved";
   return (
     <div
       id={`thread-${thread.root.id}`}
-      className={`rounded-lg border p-3 ${thread.root.status === "resolved" ? "bg-muted/40 opacity-75" : "bg-card"}`}
+      className={`rounded-md border ${resolved ? "opacity-75" : ""}`}
     >
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex items-center justify-between gap-2 rounded-t-md border-b bg-canvas-subtle px-3 py-2 text-xs text-fg-muted">
         <div className="flex min-w-0 items-center gap-2">
           <Avatar name={author} agent={thread.root.createdBy === "agent"} />
-          <div className="min-w-0">
-            <div className="truncate text-sm font-medium">{author}</div>
-            <div className="text-xs text-muted-foreground">
-              <RelativeTime value={thread.root.createdAt} />
-            </div>
-          </div>
+          <span className="truncate font-semibold text-fg">{author}</span>
+          <span className="shrink-0">
+            <RelativeTime value={thread.root.createdAt} />
+          </span>
         </div>
         {!thread.root.consumedAt ? (
           <span
-            className="mt-1 h-2 w-2 shrink-0 rounded-full bg-amber-400"
+            className="size-2 shrink-0 rounded-full bg-attention-emphasis"
             title="Agent has not pulled this yet"
           />
         ) : null}
       </div>
-      <a
-        className="mt-3 inline-flex max-w-full items-center gap-1 rounded-full border bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        href={targetId ? `#${targetId}` : "#"}
-        onClick={(event) => {
-          if (!thread.root.anchor) {
-            return;
-          }
-          event.preventDefault();
-          // Push the jump into history so the back button returns here.
-          if (targetId) {
-            window.history.pushState(
-              null,
-              "",
-              `#${encodeURIComponent(targetId)}`,
-            );
-          }
-          scrollToAnchor(thread.root.anchor);
-        }}
-      >
-        {thread.root.detached ? <Badge tone="amber">detached</Badge> : null}
-        <span className="truncate">{thread.root.anchorLabel}</span>
-      </a>
-      <p className="mt-2 text-sm leading-6">{thread.root.message}</p>
-      {thread.replies.length > 0 ? (
-        <div className="mt-3 space-y-2 border-l pl-3">
-          {thread.replies.map((item) => (
-            <div key={item.id} className="text-sm">
-              <div className="text-xs text-muted-foreground">
-                {item.authorName ?? item.authorEmail ?? "Agent"} ·{" "}
-                <RelativeTime value={item.createdAt} />
+      <div className="p-3">
+        <a
+          className="inline-flex max-w-full items-center gap-1 rounded-md bg-accent-muted px-1.5 font-mono text-xs leading-5 text-accent-fg transition-colors hover:underline"
+          href={targetId ? `#${targetId}` : "#"}
+          onClick={(event) => {
+            if (!thread.root.anchor) {
+              return;
+            }
+            event.preventDefault();
+            // Push the jump into history so the back button returns here.
+            if (targetId) {
+              window.history.pushState(
+                null,
+                "",
+                `#${encodeURIComponent(targetId)}`,
+              );
+            }
+            scrollToAnchor(thread.root.anchor);
+          }}
+        >
+          {thread.root.detached ? <Badge tone="amber">detached</Badge> : null}
+          <span className="truncate">{thread.root.anchorLabel}</span>
+        </a>
+        <p className="mt-2 text-sm leading-5">{thread.root.message}</p>
+        {thread.replies.length > 0 ? (
+          <div className="mt-3 space-y-2 border-l-2 pl-3">
+            {thread.replies.map((item) => (
+              <div key={item.id} className="text-sm">
+                <div className="text-xs text-fg-muted">
+                  <span className="font-semibold text-fg">
+                    {item.authorName ?? item.authorEmail ?? "Agent"}
+                  </span>{" "}
+                  <RelativeTime value={item.createdAt} />
+                </div>
+                <p className="leading-5">{item.message}</p>
               </div>
-              <p>{item.message}</p>
+            ))}
+          </div>
+        ) : null}
+        {openReply ? (
+          <div className="mt-3 space-y-2">
+            <textarea
+              aria-label="Reply in thread"
+              className="min-h-16 w-full resize-y rounded-md border bg-canvas px-3 py-2 text-sm shadow-input outline-none transition-colors placeholder:text-fg-muted focus-visible:border-focus focus-visible:ring-1 focus-visible:ring-focus"
+              placeholder="Reply in thread"
+              value={reply}
+              onChange={(event) => onReply(event.target.value)}
+            />
+            <div className="flex justify-end">
+              <Button disabled={pendingReply} size="sm" onClick={onSubmitReply}>
+                Post reply
+              </Button>
             </div>
-          ))}
+          </div>
+        ) : null}
+        <div className="mt-2 flex items-center justify-between gap-2">
+          <Button size="sm" variant="ghost" onClick={onOpenReply}>
+            Reply
+          </Button>
+          {thread.root.status === "open" ? (
+            <Button
+              aria-label="Resolve thread"
+              size="icon-sm"
+              title="Resolve"
+              variant="ghost"
+              onClick={() => onStatus(thread.root.id, "resolved")}
+            >
+              <Check className="h-4 w-4" />
+            </Button>
+          ) : (
+            <Button
+              aria-label="Reopen thread"
+              size="icon-sm"
+              title="Reopen"
+              variant="ghost"
+              onClick={() => onStatus(thread.root.id, "open")}
+            >
+              <RotateCcw className="h-4 w-4" />
+            </Button>
+          )}
         </div>
-      ) : null}
-      {openReply ? (
-        <div className="mt-3 space-y-2">
-          <textarea
-            aria-label="Reply in thread"
-            className="min-h-16 w-full resize-y rounded-md border bg-card p-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            placeholder="Reply in thread"
-            value={reply}
-            onChange={(event) => onReply(event.target.value)}
-          />
-          <Button disabled={pendingReply} size="sm" onClick={onSubmitReply}>
-            Post reply
-          </Button>
-        </div>
-      ) : null}
-      <div className="mt-3 flex items-center justify-between gap-2">
-        <Button size="sm" variant="ghost" onClick={onOpenReply}>
-          Reply
-        </Button>
-        {thread.root.status === "open" ? (
-          <Button
-            aria-label="Resolve thread"
-            size="icon"
-            title="Resolve"
-            variant="ghost"
-            onClick={() => onStatus(thread.root.id, "resolved")}
-          >
-            <Check className="h-4 w-4" />
-          </Button>
-        ) : (
-          <Button
-            aria-label="Reopen thread"
-            size="icon"
-            title="Reopen"
-            variant="ghost"
-            onClick={() => onStatus(thread.root.id, "open")}
-          >
-            <RotateCcw className="h-4 w-4" />
-          </Button>
-        )}
       </div>
     </div>
   );
@@ -3986,13 +4191,13 @@ function ThreadCard({
 function Avatar({ name, agent }: { name: string; agent?: boolean }) {
   if (agent) {
     return (
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
-        <Bot className="h-4 w-4" />
+      <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-neutral-emphasis text-fg-on-emphasis">
+        <Bot className="h-3 w-3" />
       </span>
     );
   }
   return (
-    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-semibold text-blue-700">
+    <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-accent-muted text-[9px] font-semibold text-accent-fg">
       {initials(name)}
     </span>
   );

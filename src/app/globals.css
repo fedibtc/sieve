@@ -471,3 +471,20 @@ html {
   }
 }
 
+/* github's add-line-comment button: hidden until its side of the row is
+   hovered, then it grows into place */
+.add-line-comment {
+  opacity: 0;
+  transform: scale(0.8);
+  transition:
+    opacity 0.1s ease-in-out,
+    transform 0.1s ease-in-out;
+}
+
+.diff-row:has([data-side="before"]:hover) [data-plus="before"],
+.diff-row:has([data-side="after"]:hover) [data-plus="after"],
+.diff-row[data-side="before"]:hover [data-plus="before"],
+.diff-row[data-side="after"]:hover [data-plus="after"] {
+  opacity: 1;
+  transform: scale(1);
+}
