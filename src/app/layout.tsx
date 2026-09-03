@@ -1,13 +1,6 @@
 import type { Metadata } from "next";
-import { Mona_Sans } from "next/font/google";
 import { colorModeInitScript } from "@/components/color-mode";
 import "./globals.css";
-
-const monaSans = Mona_Sans({
-  variable: "--font-mona-sans",
-  subsets: ["latin"],
-  display: "swap",
-});
 
 export const metadata: Metadata = {
   title: "sieve",
@@ -22,7 +15,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${monaSans.variable} h-full font-sans antialiased`}
+      className="h-full font-sans"
       data-color-mode="auto"
       suppressHydrationWarning
     >
