@@ -163,14 +163,14 @@ export function TokenSettings({
                     <td className="px-4 py-3">
                       <TokenStatus token={token} />
                     </td>
-                    <td className="px-4 py-3 font-mono text-fg-muted">
+                    <td className="px-4 py-3 font-mono">
                       {token.prefix ?? "sieve_"}
                       {token.start ?? ""}
                     </td>
-                    <td className="px-4 py-3 text-fg-muted">
+                    <td className="px-4 py-3">
                       <RelativeTime value={token.lastRequest} />
                     </td>
-                    <td className="px-4 py-3 text-fg-muted">
+                    <td className="px-4 py-3">
                       <RelativeTime value={token.expiresAt} />
                     </td>
                     <td className="px-4 py-3">

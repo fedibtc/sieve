@@ -295,9 +295,7 @@ export function ReviewDetail({
               {review.title}
             </h1>
             {review.summary ? (
-              <p className="mt-2 max-w-3xl text-base text-fg-muted">
-                {review.summary}
-              </p>
+              <p className="mt-2 max-w-3xl text-base">{review.summary}</p>
             ) : null}
             <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-fg-muted">
               <span className="inline-flex items-center gap-1 rounded-full border bg-canvas px-2 py-0.5 font-mono text-xs">
@@ -934,7 +932,7 @@ function EvidenceGroup({
         <div className="flex items-center justify-between gap-3">
           {aside ? (
             <h2
-              className="text-sm font-semibold text-fg-muted"
+              className="text-sm font-semibold"
               data-block-id={heading?.id}
               data-text-anchorable={heading ? "true" : undefined}
               id={heading?.id}
@@ -1087,7 +1085,7 @@ function EvidenceCard({
               </span>
             ) : null}
             <span
-              className={`flex items-center gap-2 font-mono text-xs text-fg-muted ${
+              className={`flex items-center gap-2 font-mono text-xs ${
                 claim ? "mt-1" : ""
               }`}
             >
@@ -1359,7 +1357,7 @@ function BlockRenderer({
                     className={`grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3 px-3 py-2 ${fieldToneClass(field.change)}`}
                   >
                     <span className="font-mono">{field.name}</span>
-                    <span className="min-w-0 text-right font-mono text-fg-muted">
+                    <span className="min-w-0 text-right font-mono">
                       {field.was ? (
                         <>
                           <span className="line-through">{field.was}</span>{" "}
@@ -1370,7 +1368,7 @@ function BlockRenderer({
                     </span>
                     {field.note ? (
                       <span
-                        className="col-span-2 text-xs text-fg-muted"
+                        className="col-span-2"
                         data-block-id={block.id}
                         data-text-anchorable="true"
                       >
@@ -1388,7 +1386,7 @@ function BlockRenderer({
                 <TableProperties className="h-4 w-4 text-fg-muted" />
                 Relations
               </h3>
-              <ul className="space-y-1 text-fg-muted">
+              <ul className="space-y-1">
                 {block.data.relations.map((relation) => (
                   <li key={relation}>→ {relation}</li>
                 ))}
@@ -1635,7 +1633,7 @@ function ApiEndpointBlock({
                       className={fieldToneClass(param.change)}
                     >
                       <td className="px-3 py-2 font-mono">{param.name}</td>
-                      <td className="px-3 py-2 font-mono text-xs text-fg-muted">
+                      <td className="px-3 py-2 font-mono">
                         {param.was ? (
                           <>
                             <span className="line-through">{param.was}</span>{" "}
@@ -1646,7 +1644,7 @@ function ApiEndpointBlock({
                           {param.type ?? "-"}
                         </span>
                       </td>
-                      <td className="px-3 py-2 text-fg-muted">{param.note}</td>
+                      <td className="px-3 py-2">{param.note}</td>
                     </tr>
                   ))}
                 </tbody>
